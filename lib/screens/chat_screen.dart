@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../db/app_database.dart';
@@ -15,6 +16,9 @@ import '../widgets/export_sheet.dart';
 import '../widgets/prompt/recurring_status.dart';
 import '../widgets/stream/stream_buffer.dart';
 import 'settings_screen.dart';
+
+/// 占位 ValueNotifier — 当没有活跃缓冲时使用,避免每帧重建
+final _EmptyTextNotifier = ValueNotifier<String>('');
 
 class ChatScreen extends StatefulWidget {
   final Chat chat;
@@ -277,7 +281,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   return ValueListenableBuilder<String>(
                     key: const ValueKey('streaming'),
                     valueListenable:
-                        _buffer?.displayed ?? const ValueNotifier<String>(''),
+                        _buffer?.displayed ?? _EmptyTextNotifier.instance,
                     builder: (_, text, __) {
                       return StreamingBubble(text: text);
                     },
