@@ -24,8 +24,8 @@ jobs:
       - name: Configure mirrors
         run: |
           echo "PUB_HOSTED_URL=https://proxy.344977.xyz/pub.dev" >> $GITHUB_ENV
-          echo "FLUTTER_STORAGE_BASE_URL=https://gh.proxy.344977.xyz/flutter_infra_release" >> $GITHUB_ENV
-          echo "FLUTTER_GIT_URL=https://gh.proxy.344977.xyz/flutter/flutter.git" >> $GITHUB_ENV
+          echo "FLUTTER_STORAGE_BASE_URL=https://proxy.344977.xyz/flutter_infra_release" >> $GITHUB_ENV
+          echo "FLUTTER_GIT_URL=https://proxy.344977.xyz/github.com/flutter/flutter.git" >> $GITHUB_ENV
           mkdir -p ~/.gradle
           cat > ~/.gradle/init.gradle <<'GRADLE'
           allprojects {
@@ -65,6 +65,7 @@ jobs:
         with:
           flutter-version: '3.24.5'
           channel: stable
+          git-source: 'https://proxy.344977.xyz/github.com/flutter/flutter.git'
 
       - name: Cache pub
         uses: actions/cache@v4
