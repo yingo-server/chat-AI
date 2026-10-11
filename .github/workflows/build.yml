@@ -2,14 +2,20 @@ name: Build Android APK & AAB
 
 on:
   push:
-    branches: [main]
+    branches: [master, main]
     tags: ['v*']
   pull_request:
-    branches: [main]
+    branches: [master, main]
   workflow_dispatch:
 
 permissions:
   contents: write
+
+env:
+  # 加速镜像 — 所有外部走 proxy.344977.xyz
+  PUB_HOSTED_URL: https://proxy.344977.xyz/pub.dev
+  FLUTTER_STORAGE_BASE_URL: https://proxy.344977.xyz/flutter_infra_release
+  ANDROID_MAVEN_MIRROR: https://maven.proxy.344977.xyz/dl/android/maven2
 
 jobs:
   build:
@@ -20,12 +26,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ---- 加速镜像:所有外部 URL 走 proxy.344977.xyz ----
-      - name: Configure mirrors
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configure Gradle mirrors
         run: |
-          echo "PUB_HOSTED_URL=https://proxy.344977.xyz/pub.dev" >> $GITHUB_ENV
-          echo "FLUTTER_STORAGE_BASE_URL=https://proxy.344977.xyz/flutter_infra_release" >> $GITHUB_ENV
-          echo "FLUTTER_GIT_URL=https://proxy.344977.xyz/github.com/flutter/flutter.git" >> $GITHUB_ENV
           mkdir -p ~/.gradle
           cat > ~/.gradle/init.gradle <<'GRADLE'
           allprojects {
@@ -54,18 +62,23 @@ jobs:
           }
           GRADLE
 
-      - name: Setup JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
+      # 直接从镜像下载 Flutter tar.xz,绕过 subosito action 的 GitHub API 调用
+      - name: Install Flutter
+        run: |
+          set -e
+          FLUTTER_VERSION="3.24.5"
+          FLUTTER_URL="https://proxy.344977.xyz/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz"
+          echo "Downloading $FLUTTER_URL"
+          mkdir -p /opt
+          curl -fL --connect-timeout 30 -o /tmp/flutter.tar.xz "$FLUTTER_URL"
+          ls -lh /tmp/flutter.tar.xz
+          tar -xJf /tmp/flutter.tar.xz -C /opt
+          mv /opt/flutter /opt/flutter
+          echo "FLUTTER_HOME=/opt/flutter" >> $GITHUB_ENV
+          echo "PATH=/opt/flutter/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.24.5'
-          channel: stable
-          git-source: 'https://proxy.344977.xyz/github.com/flutter/flutter.git'
+      - name: Verify Flutter
+        run: flutter --version
 
       - name: Cache pub
         uses: actions/cache@v4
@@ -82,9 +95,7 @@ jobs:
         continue-on-error: true
 
       - name: Build APK (release, split per ABI)
-        run: |
-          flutter build apk --release --split-per-abi \
-            --dart-define=ANDROID_FLAVOR=ci
+        run: flutter build apk --release --split-per-abi
 
       - name: Build App Bundle (release)
         run: flutter build appbundle --release
