@@ -1,24 +1,22 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../db/app_database.dart';
 import '../main.dart' show ConfigScope;
 import '../models/app_config.dart';
 import '../models/chat.dart';
 import '../services/chat_service.dart';
+import '../theme/app_theme.dart';
 import '../utils/dialogs.dart';
-import '../widgets/animation/message_animations.dart';
 import '../widgets/chat/message_bubble.dart' as chat;
 import '../widgets/chat/streaming_bubble.dart';
 import '../widgets/export_sheet.dart';
-import '../widgets/prompt/recurring_status.dart';
 import '../widgets/stream/stream_buffer.dart';
-import 'settings_screen.dart';
-
-/// 占位 ValueNotifier — 当没有活跃缓冲时使用,避免每帧重建
-final _emptyTextNotifier = ValueNotifier<String>('');
 
 class ChatScreen extends StatefulWidget {
   final Chat chat;
@@ -38,12 +36,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   List<Message> _messages = [];
   bool _busy = false;
-
-  /// 实时流式缓冲器 — 接收上游 token,定时释放
   StreamBuffer? _buffer;
 
-  /// 当前正在跑的流,可被取消
-  StreamSubscription<String>? _runSub;
+  /// 已附加的图片 / 文件,会在本轮发送时一起发出
+  final List<_Attachment> _attachments = [];
+
+  /// 占位 ValueNotifier — 当没有活跃缓冲时使用
+  static final _emptyTextNotifier = ValueNotifier<String>('');
 
   @override
   void initState() {
@@ -53,7 +52,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
-    _runSub?.cancel();
     _buffer?.dispose();
     _scroll.dispose();
     _input.dispose();
@@ -75,13 +73,64 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  // ===== 附件 =====
+
+  Future<void> _pickImage() async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(source: ImageSource.gallery);
+      if (picked == null) return;
+      setState(() => _attachments.add(
+          _Attachment.image(File(picked.path), picked.name)));
+    } catch (e) {
+      if (!mounted) return;
+      showSnack(context, '图片选择失败: $e', error: true);
+    }
+  }
+
+  Future<void> _pickFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        withData: false,
+      );
+      if (result == null || result.files.isEmpty) return;
+      final f = result.files.first;
+      if (f.path == null) return;
+      setState(() => _attachments.add(
+          _Attachment.file(File(f.path!), f.name)));
+    } catch (e) {
+      if (!mounted) return;
+      showSnack(context, '文件选择失败: $e', error: true);
+    }
+  }
+
+  void _removeAttachment(_Attachment a) {
+    setState(() => _attachments.remove(a));
+  }
+
+  // ===== 发送 =====
+
   Future<void> _send() async {
     if (_busy) return;
-    final text = _input.text.trim();
-    if (text.isEmpty) return;
+    var text = _input.text.trim();
+    if (text.isEmpty && _attachments.isEmpty) return;
     if (_service == null || _config == null) return;
 
-    // 先落库用户消息(乐观 UI)
+    // 把附件信息拼到 user 消息里(OpenAI images:[text]/... 格式)
+    if (_attachments.isNotEmpty) {
+      final parts = StringBuffer();
+      parts.writeln(text);
+      for (final a in _attachments) {
+        if (a.isImage) {
+          parts.writeln('\n[图片附件: ${a.name}]');
+        } else {
+          parts.writeln('\n[文件附件: ${a.name}]');
+        }
+      }
+      text = parts.toString().trim();
+    }
+
     final persisted = await AppDatabase.instance.insertMessage(Message(
       chatId: widget.chat.id!,
       role: MessageRole.user,
@@ -91,29 +140,29 @@ class _ChatScreenState extends State<ChatScreen> {
     final baseHistory = await AppDatabase.instance
         .listMessages(widget.chat.id!, includeCompressed: false);
 
-    // 准备缓冲器
     final buf = StreamBuffer(
-      charsPerSecond: _config!.ai.streamCharsPerSecond,
+      charsPerSecond: _resolveStreamSpeed(_config!.userPrefs),
+      maxBuffer: _resolveBufferSize(_config!.userPrefs),
     );
     setState(() {
       _messages = baseHistory;
       _busy = true;
       _buffer = buf;
       _input.clear();
+      _attachments.clear();
     });
     _scrollToEnd();
 
     String? err;
     try {
-      final stream = _service!.sendStream(
+      await for (final _ in _service!.sendStream(
         chat: widget.chat,
         history: _messages.where((m) => m.id != persisted).toList(),
         userText: text,
         alreadyPersistedUserText: true,
         buffer: buf,
-        onDelta: (_) {/* 由 buffer 控制节奏 */},
-      );
-      await for (final _ in stream) {
+        onDelta: (_) {},
+      )) {
         // drain
       }
     } catch (e) {
@@ -133,15 +182,14 @@ class _ChatScreenState extends State<ChatScreen> {
     if (err != null) showSnack(context, '错误: $err', error: true);
   }
 
+  /// 按 userPrefs 互斥规则计算 StreamBuffer 参数
+  int _resolveStreamSpeed(UserPrefs p) =>
+      p.bufferSize > 0 ? 0 : p.streamSpeed;
+  int _resolveBufferSize(UserPrefs p) =>
+      p.streamSpeed > 0 ? 0 : p.bufferSize;
+
   Future<void> _stop() async {
-    await _runSub?.cancel();
-    _runSub = null;
-    await _buffer?.flush();
-    final msgs = await AppDatabase.instance
-        .listMessages(widget.chat.id!, includeCompressed: false);
-    if (!mounted) return;
     setState(() {
-      _messages = msgs;
       _busy = false;
       _buffer?.dispose();
       _buffer = null;
@@ -159,84 +207,22 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _export() async {
-    await showExportSheet(context, chat: widget.chat, messages: _messages);
-  }
-
-  Future<void> _editSystemPrompt() async {
-    final cur = widget.chat.extraSystemPrompt ?? '';
-    final ctrl = TextEditingController(text: cur);
-    final next = await showDialog<String>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('本对话追加系统提示词'),
-        content: TextField(
-            controller: ctrl,
-            maxLines: 4,
-            autofocus: true,
-            decoration: const InputDecoration(
-                hintText: '仅作用于本对话,可留空')),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, ctrl.text.trim()),
-              child: const Text('保存')),
-        ],
-      ),
-    );
-    if (next == null) return;
-    final updated = widget.chat.copyWith(
-        extraSystemPrompt: next.isEmpty ? null : next,
-        updatedAt: DateTime.now());
-    await AppDatabase.instance.updateChat(updated);
-    if (!mounted) return;
-    showSnack(context, next.isEmpty ? '已清除' : '已更新本对话的附加提示词');
-  }
-
-  void _showPromptStatus() {
-    final svc = _service;
-    if (svc == null) return;
-    final userTurns = _messages
-            .where((m) =>
-                m.role == MessageRole.user ||
-                m.role == MessageRole.assistant)
-            .length ~/
-        2;
-    showModalBottomSheet(
-      context: context,
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(16),
-        child: RecurringPromptsStatusCard(
-          prompts: _config?.recurringPrompts ?? const [],
-          cursor: svc.scheduler.cursor,
-          turnsCompleted: userTurns,
-        ),
-      ),
-    );
+    await showExportSheet(context,
+        chat: widget.chat, messages: _messages);
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final hasConfig = _config != null && _config!.ai.isValid;
+    final prefs = _config?.userPrefs ?? UserPrefs.defaults;
 
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.chat.title, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
-            tooltip: '周期提示词状态',
-            icon: const Icon(Icons.rule),
-            onPressed: _showPromptStatus,
-          ),
-          IconButton(
-            tooltip: '本对话提示词',
-            icon: const Icon(Icons.tune),
-            onPressed: _editSystemPrompt,
-          ),
-          IconButton(
-            tooltip: '导出',
+            tooltip: '导出 Markdown',
             icon: const Icon(Icons.ios_share),
             onPressed: _export,
           ),
@@ -249,55 +235,67 @@ class _ChatScreenState extends State<ChatScreen> {
               backgroundColor: scheme.errorContainer,
               leading: Icon(Icons.warning_amber_rounded,
                   color: scheme.onErrorContainer),
-              content: Text('请先在设置中填写 API 信息',
+              content: Text('请检查配置',
                   style: TextStyle(color: scheme.onErrorContainer)),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                          builder: (_) => const SettingsScreen())),
-                  child: const Text('去设置'),
-                ),
-              ],
+              actions: const [SizedBox.shrink()],
             ),
           Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 220),
-              child: ListView.builder(
-                key: ValueKey(_messages.length),
-                controller: _scroll,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 12),
-                itemCount: _messages.length + (_busy ? 1 : 0),
-                itemBuilder: (_, i) {
-                  if (i < _messages.length) {
-                    final m = _messages[i];
-                    return FadeInUp(
-                      key: ValueKey('m-${m.id ?? m.createdAt}'),
-                      child: chat.MessageBubble(message: m),
-                    );
-                  }
-                  // 流式占位
-                  return ValueListenableBuilder<String>(
-                    key: const ValueKey('streaming'),
-                    valueListenable:
-                        _buffer?.displayed ?? _emptyTextNotifier,
-                    builder: (_, text, __) {
-                      return StreamingBubble(text: text);
-                    },
-                  );
-                },
-              ),
+            child: ListView.builder(
+              key: ValueKey(_messages.length),
+              controller: _scroll,
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 12),
+              itemCount: _messages.length + (_busy ? 1 : 0),
+              itemBuilder: (_, i) {
+                if (i < _messages.length) {
+                  return chat.MessageBubble(message: _messages[i]);
+                }
+                return ValueListenableBuilder<String>(
+                  key: const ValueKey('streaming'),
+                  valueListenable:
+                      _buffer?.displayed ?? _emptyTextNotifier,
+                  builder: (_, text, __) => StreamingBubble(text: text),
+                );
+              },
             ),
           ),
+          if (_attachments.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 8),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final a in _attachments)
+                    InputChip(
+                      avatar: Icon(
+                          a.isImage ? Icons.image : Icons.insert_drive_file,
+                          size: 16),
+                      label: Text(a.name, overflow: TextOverflow.ellipsis),
+                      onDeleted: () => _removeAttachment(a),
+                    ),
+                ],
+              ),
+            ),
           SafeArea(
             top: false,
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 8, vertical: 8),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
+                  IconButton(
+                    tooltip: '附加图片',
+                    icon: const Icon(Icons.image_outlined),
+                    onPressed: _busy ? null : _pickImage,
+                  ),
+                  IconButton(
+                    tooltip: '附加文件',
+                    icon: const Icon(Icons.attach_file),
+                    onPressed: _busy ? null : _pickFile,
+                  ),
                   Expanded(
                     child: TextField(
                       controller: _input,
@@ -305,13 +303,15 @@ class _ChatScreenState extends State<ChatScreen> {
                       minLines: 1,
                       maxLines: 5,
                       enabled: !_busy,
-                      decoration: const InputDecoration(
+                      style: TextStyle(fontSize: prefs.fontSize.toDouble()),
+                      decoration: InputDecoration(
                         hintText: '输入消息…',
+                        isDense: true,
                       ),
                       onSubmitted: (_) => _send(),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 4),
                   AnimatedSwitcher(
                     duration: const Duration(milliseconds: 150),
                     child: _busy
@@ -338,3 +338,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
+class _Attachment {
+  final File file;
+  final String name;
+  final bool isImage;
+  _Attachment.image(this.file, this.name) : isImage = true;
+  _Attachment.file(this.file, this.name) : isImage = false;
+}

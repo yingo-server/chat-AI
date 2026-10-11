@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../db/app_database.dart';
+import '../main.dart' show ConfigScope;
+import '../models/app_config.dart';
 import '../models/chat.dart';
 import '../utils/dialogs.dart';
 import 'chat_screen.dart';
@@ -34,7 +36,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _newChat() async {
-    final title = await inputDialog(context, title: '新建对话', hint: '给对话起个名字');
+    final title = await inputDialog(
+      context,
+      title: '新建对话',
+      hint: '给对话起个名字',
+    );
     if (title == null || title.isEmpty) return;
     final chat = Chat(title: title);
     final id = await AppDatabase.instance.insertChat(chat);
@@ -77,18 +83,15 @@ class _HomeScreenState extends State<HomeScreen> {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('AI 对话'),
+        title: const Text('对话'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings_outlined),
             tooltip: '设置',
-            onPressed: () async {
-              await Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => const SettingsScreen()));
-              if (!mounted) return;
-              // 回到首页时刷新即可(配置不直接影响列表,但确保状态干净)
-              setState(() {});
-            },
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => SettingsScreen(
+                  controller: ConfigScope.of(context).controller),
+            )),
           ),
         ],
       ),
@@ -110,10 +113,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(16)),
                           leading: CircleAvatar(
-                            backgroundColor: scheme.primaryContainer,
-                            child: Icon(Icons.chat_bubble_outline,
-                                color: scheme.onPrimaryContainer),
-                          ),
+                              backgroundColor: scheme.primaryContainer,
+                              child: Icon(Icons.chat_bubble_outline,
+                                  color: scheme.onPrimaryContainer)),
                           title: Text(c.title,
                               maxLines: 1, overflow: TextOverflow.ellipsis),
                           subtitle: Text(
@@ -164,7 +166,8 @@ class _HomeScreenState extends State<HomeScreen> {
           Text('还没有对话',
               style: TextStyle(fontSize: 18, color: s.onSurfaceVariant)),
           const SizedBox(height: 4),
-          const Text('点击右下角"新建"开始', style: TextStyle(color: Colors.grey)),
+          const Text('点击右下角"新建"开始',
+              style: TextStyle(color: Colors.grey)),
         ],
       ),
     );

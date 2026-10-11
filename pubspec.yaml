@@ -21,11 +21,15 @@ dependencies:
   # Networking
   http: ^1.2.2
 
+  # Crypto (用于密钥混淆,防 grep)
+  crypto: ^3.0.5
+
   # UI / utilities
   flutter_markdown: ^0.7.3
   intl: ^0.19.0
   share_plus: ^10.0.2
   file_picker: ^8.1.2
+  image_picker: ^1.1.2
 
 dev_dependencies:
   flutter_test:

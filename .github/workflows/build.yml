@@ -40,15 +40,25 @@ jobs:
         run: |
           if [ ! -d android ]; then
             echo "Scaffolding android/ via flutter create"
-            # 备份现有的 main.dart(脚手架会覆盖)
             cp lib/main.dart lib/main.dart.bak || true
-            # 把整个 lib/assets 备份
             cp -r lib /tmp/lib.bak || true
             flutter create . --platforms android --org com.local --project-name chat_ai
-            # 恢复真正的项目文件
             rm -rf lib/assets
             cp -r /tmp/lib.bak/* lib/
             rm -rf test/widget_test.dart
+          fi
+
+      - name: Enable R8 / minify / proguard
+        run: |
+          BUILD_GRADLE=android/app/build.gradle
+          if [ -f "$BUILD_GRADLE" ]; then
+            # 启用 minifyEnabled + shrinkResources
+            sed -i 's/minifyEnabled false/minifyEnabled true/g' "$BUILD_GRADLE" || true
+            sed -i 's/shrinkResources false/shrinkResources true/g' "$BUILD_GRADLE" || true
+            # 若没有 shrinkResources 字段,追加
+            if ! grep -q 'shrinkResources' "$BUILD_GRADLE"; then
+              sed -i 's/minifyEnabled true/minifyEnabled true\n            shrinkResources true/g' "$BUILD_GRADLE"
+            fi
           fi
 
       - name: Cache pub
@@ -65,16 +75,35 @@ jobs:
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
         continue-on-error: true
 
-      - name: Build APK (release, split per ABI)
-        run: flutter build apk --release --split-per-abi
+      - name: Build APK (release, obfuscated, split per ABI)
+        env:
+          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
+          API_KEY: ${{ secrets.API_KEY }}
+          API_MODEL: ${{ secrets.API_MODEL }}
+        run: |
+          flutter build apk --release --obfuscate \
+            --split-debug-info=build/symbols \
+            --split-per-abi \
+            --dart-define=API_ENDPOINT="$API_ENDPOINT" \
+            --dart-define=API_KEY="$API_KEY" \
+            --dart-define=API_MODEL="$API_MODEL"
 
-      - name: Build App Bundle (release)
-        run: flutter build appbundle --release
+      - name: Build App Bundle (release, obfuscated)
+        env:
+          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
+          API_KEY: ${{ secrets.API_KEY }}
+          API_MODEL: ${{ secrets.API_MODEL }}
+        run: |
+          flutter build appbundle --release --obfuscate \
+            --split-debug-info=build/symbols \
+            --dart-define=API_ENDPOINT="$API_ENDPOINT" \
+            --dart-define=API_KEY="$API_KEY" \
+            --dart-define=API_MODEL="$API_MODEL"
 
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: apk-release
+          name: apk-release-obfuscated
           path: |
             build/app/outputs/flutter-apk/*.apk
             build/app/outputs/apk/release/*.apk
@@ -83,9 +112,16 @@ jobs:
       - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: appbundle-release
+          name: appbundle-release-obfuscated
           path: build/app/outputs/bundle/release/*.aab
           if-no-files-found: warn
+
+      - name: Upload obfuscation symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-symbols
+          path: build/symbols
+          if-no-files-found: ignore
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')

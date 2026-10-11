@@ -1,22 +1,20 @@
 import 'package:flutter/material.dart';
 
-/// M3 主题 — 动态色彩从单一 seed 派生
+/// M3 主题 — 根据 seed 颜色构建
 class AppTheme {
-  static ThemeData light(ColorScheme? dynamic) {
-    final scheme = dynamic ??
-        ColorScheme.fromSeed(
-          seedColor: const Color(0xFF7B61FF),
-          brightness: Brightness.light,
-        );
+  static ThemeData light(Color? seed) {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: seed ?? const Color(0xFF7B61FF),
+      brightness: Brightness.light,
+    );
     return _build(scheme);
   }
 
-  static ThemeData dark(ColorScheme? dynamic) {
-    final scheme = dynamic ??
-        ColorScheme.fromSeed(
-          seedColor: const Color(0xFF7B61FF),
-          brightness: Brightness.dark,
-        );
+  static ThemeData dark(Color? seed) {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: seed ?? const Color(0xFF7B61FF),
+      brightness: Brightness.dark,
+    );
     return _build(scheme);
   }
 
@@ -33,10 +31,6 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
         foregroundColor: scheme.onSurface,
         centerTitle: false,
-      ),
-      navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: scheme.surface,
-        indicatorColor: scheme.secondaryContainer,
       ),
       cardTheme: CardTheme(
         color: scheme.surfaceContainerHigh,

@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../animation/message_animations.dart';
 
-/// 流式回复的气泡 — 内置打字光标
-/// 显示当前已缓冲的可见文本 + 闪烁光标
+/// 流式占位气泡 — 跟随 theme 字号
 class StreamingBubble extends StatelessWidget {
   final String text;
   final bool finished;
@@ -12,6 +11,7 @@ class StreamingBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
     return Align(
       alignment: Alignment.centerLeft,
       child: ConstrainedBox(
@@ -33,10 +33,8 @@ class StreamingBubble extends StatelessWidget {
                   child: SelectionArea(
                     child: Text(
                       text.isEmpty ? ' ' : text,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: scheme.onSurface,
-                            height: 1.55,
-                          ),
+                      style: theme.textTheme.bodyMedium
+                          ?.copyWith(color: scheme.onSurface, height: 1.55),
                     ),
                   ),
                 ),
@@ -50,41 +48,6 @@ class StreamingBubble extends StatelessWidget {
                   ),
               ],
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 打字三点(M3 ProgressIndicator 简化版,完全用 Material 组件)
-class TypingIndicator extends StatelessWidget {
-  const TypingIndicator({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Card(
-        color: scheme.surfaceContainerHigh,
-        elevation: 0,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(20)),
-        ),
-        child: const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              SizedBox(width: 10),
-              Text('正在思考…'),
-            ],
           ),
         ),
       ),

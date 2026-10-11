@@ -1,64 +1,60 @@
 # AI Chat — Flutter
 
-Material 3 重写的本地 AI 对话应用。**单用户**,对话保存在本地 SQLite,无任何云端依赖(除 LLM API)。
+对话管理 + 聊天窗口。极简界面,所有配置隐藏在 `config.json`。
 
-## 特性
+## 用户能看到的 UI
+- **对话列表**:新建 / 重命名 / 删除
+- **对话窗口**:输入消息 + 附加图片 + 附加文件 + 导出 MD(一问一答)
+- **设置**:字号 / 颜色 (6 选 1) / 缓冲区大小 / 输出速度(后两项互斥)
 
-- ✅ **纯本地存储**:对话、消息、配置全部在应用文档目录
-- ✅ **Material 3**:全部使用 M3 原生组件(`Card` / `Chip` / `MaterialBanner` / `PopupMenuButton` / `Slider` / `DropdownButton` / `NavigationBar` 等),无自定义 paint
-- ✅ **流式缓冲**:LLM 输出按 ~24 字/秒自动节流,缓冲 50 字,设置页可调 4~120
-- ✅ **后台上下文压缩**:达到阈值自动调 LLM 摘要早期消息,UI 无感
-- ✅ **周期提示词轮询**:多条提示词按 roundRobin / all / random 模式自动注入
-- ✅ **可配置提示词体系**:系统提示词模板 + 对话级追加提示词 + 周期提示词,均通过 `config.json` 驱动
-- ✅ **导出**:JSON / Markdown / 纯文本,任意对话右上角分享按钮
-- ✅ **提示词调度状态可视化**:仅开发者面板可见
+## 开发者看到的 (`config.json`)
+- `endpoint` / `apiKey`:**以密文持久化**(XOR + base64,密钥随机生成存于 `.chat_ai_salt`)
+- `systemPrompts` / `recurringPrompts` / `context` 等全部结构
 
-## 目录结构
+## 端点 / 密钥如何注入
+仓库中 `assets/config.example.json` 只放占位符。**真实值不在仓库内**,通过两种方式注入:
 
-```
-AI_Flutter/
-├── lib/
-│   ├── main.dart
-│   ├── models/        # 数据模型 + AppConfig + PromptScheduler
-│   ├── db/            # SQLite 持久层
-│   ├── services/      # LLM 客户端、聊天服务、配置、导出
-│   ├── screens/       # home / chat / settings
-│   ├── widgets/       # chat / animation / stream / prompt
-│   ├── theme/         # M3 主题
-│   └── utils/
-├── assets/config.example.json   # 默认配置示例
-├── .github/workflows/build.yml  # GitHub Actions 自动构建
-├── setup-mirrors.sh             # 镜像加速配置
-├── build.sh                     # 本地构建脚本
-└── MIRRORS.md
-```
+### A) GitHub Actions Secrets(推荐,CI 用)
+在仓库 **Settings → Secrets and variables → Actions → New repository secret** 添加:
+- `API_ENDPOINT` = `https://server.344977.xyz:3001/v1`
+- `API_KEY` = `wbk_8a15b5d6367d990a0f520074a667de9fd392f531d5689978`
+- `API_MODEL` = `cn:deepseek-v4.1-flash`
 
-## CI / 构建
+CI 会以 `--dart-define` 注入到编译产物。运行时不会出现在明文日志或文件中。
 
-### GitHub Actions
-`.github/workflows/build.yml`:
-- 触发:push / PR / tag / 手动
-- 输出:APK(分 ABI) + AAB,作为 artifact;tag 推送自动挂到 Release
-- 加速:所有外部依赖走 `proxy.344977.xyz` 与 `gh.proxy.344977.xyz`
-
-### 本地构建
+### B) 本地构建
 ```bash
-./setup-mirrors.sh   # 配置加速镜像
-./build.sh apk       # 或 aab / all
+flutter build apk --release --obfuscate \
+  --split-debug-info=build/symbols \
+  --dart-define=API_ENDPOINT="..." \
+  --dart-define=API_KEY="..." \
+  --dart-define=API_MODEL="cn:deepseek-v4.1-flash"
 ```
 
-## 快速开始
+应用首次启动时,内存中读到的 endpoint/apiKey 会被加密写入 `config.json`,之后不再需要 dart-define。
 
-1. 启动应用 → 进入设置页
-2. 填写 API:
-   - Endpoint (OpenAI 兼容)
-   - API Key
-   - Model 名
-3. 流速按需调整(Slider 4~120 字/秒)
-4. 添加系统提示词模板 / 周期提示词
-5. 回首页 → 新建对话 → 开始
+## 混淆 / 压缩措施
+1. **Flutter `--obfuscate --split-debug-info`** — 类名 / 方法名混淆,symbols 单独上传到 artifact
+2. **R8 + minify + shrinkResources** — 死代码删除,资源压缩
+3. **ProGuard 规则** — `android/app/proguard-rules.pro`:`-optimizationpasses 5` `-allowaccessmodification` `-overloadaggressively` `-repackageclasses ''`
+4. **SecretBox** — 端点 / 密钥运行时明文不入文件,以 XOR 密文存
+5. **`config.example.json`** 不含真实密钥,占位符空字符串
 
-配置写入应用文档目录的 `config.json`,也可手动复制 `assets/config.example.json`。
+## 模型选择
+各模型 credits 比较(经 `https://server.344977.xyz:3001/v1/models` 抓取):
+- 选 fast:**GLM-5.3-Flash / Deepseek-V4.1-Flash / Hy3-X / Space-Bunny**
+- 默认:`cn:deepseek-v4.1-flash`(1M ctx, 393k 输出,x0.11 credit)
 
-## 镜像说明
-详见 [MIRRORS.md](./MIRRORS.md)。
+## 提示词轮询策略(开发者档)
+- 持久系统提示词(始终在第一条 system 消息)
+- 每 2~4 轮(user-assistant 对数计),在 user 消息前再注入一次持久 system 提示词 — 防止长对话遗忘约束;UI 不显示任何提示词标记
+- 上下文压缩:消息数 ≥ `compressTriggerMessages`(默认 80)就调 LLM 摘要早期对话
+
+## 构建
+```bash
+flutter pub get
+flutter build apk --release --obfuscate --split-debug-info=build/symbols \
+  --dart-define=API_ENDPOINT=... \
+  --dart-define=API_KEY=... \
+  --dart-define=API_MODEL=cn:deepseek-v4.1-flash
+```

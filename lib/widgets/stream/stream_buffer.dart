@@ -1,16 +1,14 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 
-/// 流式节流缓冲器。
+/// 流式节流缓冲器:
+/// - 接收上游 token `add(chunk)`
+/// - 内部 StringBuffer
+/// - 每 [tickInterval] 释放约 [charsPerSecond] 字
+/// - 当缓冲长度 ≥ [maxBuffer] 时,触发一次性"泄洪"
 ///
-/// 工作机制:
-/// - 上游以任意速度 `add(chunk)` 灌入文本
-/// - 内部维护一个 StringBuffer
-/// - 每 [tickInterval] 释放约 [charsPerSecond] * tick(秒) 个字符
-/// - 当缓冲长度 ≥ [maxBuffer] 时,触发一次性"泄洪"以避免积压
-/// - 上游关闭时调用 [flush] 把残余放完
-///
-/// 暴露 [displayed](ValueListenable<String>)给 UI 用 `ValueListenableBuilder`。
+/// [charsPerSecond] = 0 → 直接透传(不缓冲,也不限速)
+/// [maxBuffer] = 0 → 不主动泄洪,完全由 [charsPerSecond] 控制节奏
 class StreamBuffer {
   StreamBuffer({
     this.charsPerSecond = 24,
@@ -21,28 +19,33 @@ class StreamBuffer {
   }
 
   final ValueNotifier<String> _displayed;
-
-  /// 当前已对外展示的文本
   ValueListenable<String> get displayed => _displayed;
   String get value => _displayed.value;
 
   Timer? _timer;
   final StringBuffer _buffer = StringBuffer();
 
-  /// 目标速率,单位:字符/秒
   double charsPerSecond;
-
-  /// 缓冲阈值;超过则触发"泄洪"
   int maxBuffer;
-
-  /// 释放 tick 周期
   Duration tickInterval;
-
   bool _disposed = false;
 
-  /// 直接灌入增量文本
   void add(String chunk) {
     if (_disposed || chunk.isEmpty) return;
+    if (charsPerSecond <= 0 && maxBuffer <= 0) {
+      // 全开透传
+      _emit(chunk);
+      return;
+    }
+    if (charsPerSecond <= 0 && maxBuffer > 0) {
+      // 仅缓冲模式:攒到 maxBuffer 一次性放完
+      _buffer.write(chunk);
+      if (_buffer.length >= maxBuffer) {
+        _emit(_buffer.toString());
+        _buffer.clear();
+      }
+      return;
+    }
     _buffer.write(chunk);
     if (_buffer.length >= maxBuffer) {
       _emit(_buffer.toString());
@@ -50,7 +53,6 @@ class StreamBuffer {
     }
   }
 
-  /// 上游结束时调用:把残余立刻放完
   Future<void> flush() async {
     if (_buffer.isEmpty) return;
     _emit(_buffer.toString());
@@ -63,9 +65,10 @@ class StreamBuffer {
 
   void _tick() {
     if (_buffer.isEmpty) return;
+    if (charsPerSecond <= 0) return; // 纯缓冲模式不靠 tick 释放
     final n = (charsPerSecond * (tickInterval.inMilliseconds / 1000.0))
         .ceil()
-        .clamp(1, maxBuffer);
+        .clamp(1, 4096);
     if (_buffer.length <= n) {
       _emit(_buffer.toString());
       _buffer.clear();
@@ -78,7 +81,6 @@ class StreamBuffer {
     }
   }
 
-  /// 重置(新一轮)
   void reset() {
     _buffer.clear();
     _displayed.value = '';

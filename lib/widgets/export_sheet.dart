@@ -1,58 +1,42 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/chat.dart';
 import '../services/export_service.dart';
 
-/// 导出对话框 — 选择格式并分享
+/// 显示导出底部表单 — 当前只支持 Markdown 一问一答格式
 Future<void> showExportSheet(
   BuildContext ctx, {
   required Chat chat,
   required List<Message> messages,
 }) async {
-  final fmt = await showModalBottomSheet<ExportFormat>(
+  final ok = await showModalBottomSheet<bool>(
     context: ctx,
     builder: (_) => SafeArea(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const ListTile(
-              title: Text('导出对话', style: TextStyle(fontWeight: FontWeight.w600))),
-          for (final f in ExportFormat.values)
-            ListTile(
-              leading: Icon(switch (f) {
-                ExportFormat.json => Icons.code,
-                ExportFormat.markdown => Icons.description,
-                ExportFormat.text => Icons.text_snippet,
-              }),
-              title: Text(switch (f) {
-                ExportFormat.json => 'JSON',
-                ExportFormat.markdown => 'Markdown',
-                ExportFormat.text => '纯文本',
-              }),
-              onTap: () => Navigator.pop(ctx, f),
-            ),
+          ListTile(
+            leading: const Icon(Icons.description),
+            title: const Text('导出为 Markdown(一问一答)'),
+            subtitle:
+                const Text('每个用户问题后紧跟其助手回答,跳过未配对的对话'),
+            onTap: () => Navigator.pop(_, true),
+          ),
+          ListTile(
+            leading: const Icon(Icons.close),
+            title: const Text('取消'),
+            onTap: () => Navigator.pop(_, false),
+          ),
         ],
       ),
     ),
   );
-  if (fmt == null) return;
+  if (ok != true) return;
   if (!ctx.mounted) return;
   final file = await ExportService.exportChat(
-      chat: chat, messages: messages, format: fmt);
+      chat: chat, messages: messages);
   if (!ctx.mounted) return;
   await Share.shareXFiles([XFile(file.path)],
       text: '对话导出: ${chat.title}');
-  // iOS / Android 上分享完成后清理
-  // ignore: unused_local_variable
-  final _ = file; // 避免 lint
-}
-
-/// 让旧 Android 设备在无 share_plus 时也能用 — 此处保留为空实现
-class NoOpShare {
-  static Future<void> share(File file) async {
-    await Share.shareXFiles([XFile(file.path)]);
-  }
 }

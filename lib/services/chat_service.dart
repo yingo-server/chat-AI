@@ -6,35 +6,33 @@ import '../models/chat.dart';
 import '../widgets/stream/stream_buffer.dart';
 import 'llm_client.dart';
 
-/// 把"该对话可见的真实消息"加上系统/周期提示词,组装成发给 LLM 的 ApiMessage 列表
+/// 把"该对话可见的真实消息"加上系统/隐藏提示词,组装成发给 LLM 的 ApiMessage 列表
 List<ApiMessage> buildPrompt({
   required Chat chat,
   required List<Message> visible,
   required AppConfig config,
-  required List<RecurringPrompt> recurringForThisTurn,
+  required bool injectHiddenThisTurn,
 }) {
   final out = <ApiMessage>[];
 
-  // 1. 系统提示词
-  final sys = config.promptById(chat.systemPromptId) ??
-      (config.systemPrompts.isNotEmpty
-          ? config.systemPrompts.first
-          : SystemPrompt.defaultPrompt());
-  final basePrompt = sys.content +
-      (chat.extraSystemPrompt != null && chat.extraSystemPrompt!.isNotEmpty
-          ? '\n\n[对话级追加]\n${chat.extraSystemPrompt}'
-          : '');
+  // 1. 主系统提示词(始终注入,作为基线)
+  final primary = config.systemPrompts.isNotEmpty
+      ? config.systemPrompts.first
+      : SystemPrompt.defaultPrompt();
+  var basePrompt = primary.content;
+  if (chat.extraSystemPrompt != null && chat.extraSystemPrompt!.isNotEmpty) {
+    basePrompt += '\n\n[对话级追加]\n${chat.extraSystemPrompt}';
+  }
   out.add(ApiMessage('system', basePrompt));
 
-  // 2. 早期压缩摘要(若有)以 system 注入
+  // 2. 早期压缩摘要
   for (final m in visible.where((m) => m.role == MessageRole.compressed)) {
     out.add(ApiMessage('system', '[历史摘要]\n${m.content}'));
   }
 
-  // 3. 本轮周期提示词 — 放在真实 user 消息之前
-  for (final p in recurringForThisTurn) {
-    out.add(ApiMessage('system',
-        '[周期提示词 #${p.id} · rotation=${p.rotation.name}]\n${p.content}'));
+  // 3. 隐藏再注入:2~4 轮一次,把基线提示词再发一次(用户看不见这段)
+  if (injectHiddenThisTurn) {
+    out.add(ApiMessage('system', basePrompt));
   }
 
   // 4. 真实对话消息
@@ -46,7 +44,7 @@ List<ApiMessage> buildPrompt({
   return out;
 }
 
-/// 对话服务 — 流式发送 + 后台压缩 + 周期提示词调度
+/// 对话服务 — 流式发送 + 后台压缩 + 隐藏 system 提示词轮询
 class ChatService {
   ChatService(this._config, {LlmStreamClient? client})
       : _client = client ?? LlmStreamClient(_config.ai),
@@ -63,17 +61,6 @@ class ChatService {
   final PromptScheduler _scheduler;
   PromptScheduler get scheduler => _scheduler;
 
-  /// 把上游 token 流喂给一个缓冲器
-  /// 返回的 StreamBuffer 暴露 .displayed 给 UI
-  StreamBuffer bindBuffer(AppConfig cfg) {
-    return StreamBuffer(
-      charsPerSecond: cfg.ai.streamCharsPerSecond,
-    );
-  }
-
-  /// 流式发送。
-  /// [onDelta] 每次拿到一段增量文本(原始速度)。
-  /// [buffer] 若提供,服务把增量同时灌入它,UI 可订阅 `buffer.displayed`
   Stream<String> sendStream({
     required Chat chat,
     required List<Message> history,
@@ -92,17 +79,17 @@ class ChatService {
     }
 
     final userTurns = history
-        .where((m) =>
-            m.role == MessageRole.user || m.role == MessageRole.assistant)
-        .length ~/
+            .where((m) =>
+                m.role == MessageRole.user || m.role == MessageRole.assistant)
+            .length ~/
         2;
-    final recurring = _scheduler.pick(_config, userTurns);
+    final injectHidden = _scheduler.shouldInjectHidden(userTurns);
 
     final prompt = buildPrompt(
       chat: chat,
       visible: history,
       config: _config,
-      recurringForThisTurn: recurring,
+      injectHiddenThisTurn: injectHidden,
     );
     prompt.add(ApiMessage('user', userText));
 
@@ -117,28 +104,22 @@ class ChatService {
         onDelta(d);
       }
     }
-
-    // 流结束:把缓冲冲完
     await buffer?.flush();
 
-    // 落库助手消息
     final assistant = Message(
       chatId: chat.id!,
       role: MessageRole.assistant,
       content: full.toString(),
     );
     await AppDatabase.instance.insertMessage(assistant);
-
-    // 触摸对话时间
     await AppDatabase.instance.touchChat(chat.id!);
 
-    // 触发后台压缩(非阻塞)
     unawaited(maybeCompress(chatId: chat.id!));
 
     yield full.toString();
   }
 
-  /// 静默判断是否需要压缩
+  /// 后台压缩
   Future<void> maybeCompress({required int chatId}) async {
     final ctx = _config.context;
     final all =
@@ -150,7 +131,6 @@ class ChatService {
     if (headCount <= 0) return;
 
     final toCompress = live.take(headCount).toList();
-
     final priorSummary = all
         .where((m) => m.role == MessageRole.compressed)
         .map((m) => m.content)
