@@ -1,0 +1,115 @@
+name: Build Android APK & AAB
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---- 加速镜像:所有外部 URL 走 proxy.344977.xyz ----
+      - name: Configure mirrors
+        run: |
+          echo "PUB_HOSTED_URL=https://proxy.344977.xyz/pub.dev" >> $GITHUB_ENV
+          echo "FLUTTER_STORAGE_BASE_URL=https://gh.proxy.344977.xyz/flutter_infra_release" >> $GITHUB_ENV
+          echo "FLUTTER_GIT_URL=https://gh.proxy.344977.xyz/flutter/flutter.git" >> $GITHUB_ENV
+          mkdir -p ~/.gradle
+          cat > ~/.gradle/init.gradle <<'GRADLE'
+          allprojects {
+              buildscript {
+                  repositories {
+                      maven { url 'https://maven.proxy.344977.xyz/dl/android/maven2/' }
+                      maven { url 'https://maven.proxy.344977.xyz/google/' }
+                      mavenCentral()
+                      google()
+                  }
+              }
+              repositories {
+                  maven { url 'https://maven.proxy.344977.xyz/dl/android/maven2/' }
+                  maven { url 'https://maven.proxy.344977.xyz/google/' }
+                  mavenCentral()
+                  google()
+              }
+          }
+          settingsEvaluated { settings ->
+              settings.pluginManagement {
+                  repositories {
+                      maven { url 'https://maven.proxy.344977.xyz/dl/android/maven2/gradle-plugins/' }
+                      gradlePluginPortal()
+                  }
+              }
+          }
+          GRADLE
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+
+      - name: Cache pub
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+        continue-on-error: true
+
+      - name: Build APK (release, split per ABI)
+        run: |
+          flutter build apk --release --split-per-abi \
+            --dart-define=ANDROID_FLAVOR=ci
+
+      - name: Build App Bundle (release)
+        run: flutter build appbundle --release
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-release
+          path: |
+            build/app/outputs/flutter-apk/*.apk
+            build/app/outputs/apk/release/*.apk
+          if-no-files-found: warn
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appbundle-release
+          path: build/app/outputs/bundle/release/*.aab
+          if-no-files-found: warn
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/app/outputs/flutter-apk/*.apk
+            build/app/outputs/apk/release/*.apk
+            build/app/outputs/bundle/release/*.aab
+          fail_on_unmatched_files: false

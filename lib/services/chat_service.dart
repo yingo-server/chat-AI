@@ -1,0 +1,192 @@
+import 'dart:async';
+
+import '../db/app_database.dart';
+import '../models/app_config.dart';
+import '../models/chat.dart';
+import '../widgets/stream/stream_buffer.dart';
+import 'llm_client.dart';
+
+/// 把"该对话可见的真实消息"加上系统/周期提示词,组装成发给 LLM 的 ApiMessage 列表
+List<ApiMessage> buildPrompt({
+  required Chat chat,
+  required List<Message> visible,
+  required AppConfig config,
+  required List<RecurringPrompt> recurringForThisTurn,
+}) {
+  final out = <ApiMessage>[];
+
+  // 1. 系统提示词
+  final sys = config.promptById(chat.systemPromptId) ??
+      (config.systemPrompts.isNotEmpty
+          ? config.systemPrompts.first
+          : SystemPrompt.defaultPrompt());
+  final basePrompt = sys.content +
+      (chat.extraSystemPrompt != null && chat.extraSystemPrompt!.isNotEmpty
+          ? '\n\n[对话级追加]\n${chat.extraSystemPrompt}'
+          : '');
+  out.add(ApiMessage('system', basePrompt));
+
+  // 2. 早期压缩摘要(若有)以 system 注入
+  for (final m in visible.where((m) => m.role == MessageRole.compressed)) {
+    out.add(ApiMessage('system', '[历史摘要]\n${m.content}'));
+  }
+
+  // 3. 本轮周期提示词 — 放在真实 user 消息之前
+  for (final p in recurringForThisTurn) {
+    out.add(ApiMessage('system',
+        '[周期提示词 #${p.id} · rotation=${p.rotation.name}]\n${p.content}'));
+  }
+
+  // 4. 真实对话消息
+  for (final m in visible.where((m) =>
+      m.role == MessageRole.user || m.role == MessageRole.assistant)) {
+    out.add(ApiMessage(m.role == MessageRole.user ? 'user' : 'assistant',
+        m.content));
+  }
+  return out;
+}
+
+/// 对话服务 — 流式发送 + 后台压缩 + 周期提示词调度
+class ChatService {
+  ChatService(this._config, {LlmStreamClient? client})
+      : _client = client ?? LlmStreamClient(_config.ai),
+        _scheduler = PromptScheduler();
+
+  AppConfig _config;
+  AppConfig get config => _config;
+  void updateConfig(AppConfig next) {
+    _config = next;
+    _client = LlmStreamClient(next.ai);
+  }
+
+  late LlmStreamClient _client;
+  final PromptScheduler _scheduler;
+  PromptScheduler get scheduler => _scheduler;
+
+  /// 把上游 token 流喂给一个缓冲器
+  /// 返回的 StreamBuffer 暴露 .displayed 给 UI
+  StreamBuffer bindBuffer(AppConfig cfg) {
+    return StreamBuffer(
+      charsPerSecond: cfg.ai.streamCharsPerSecond,
+    );
+  }
+
+  /// 流式发送。
+  /// [onDelta] 每次拿到一段增量文本(原始速度)。
+  /// [buffer] 若提供,服务把增量同时灌入它,UI 可订阅 `buffer.displayed`
+  Stream<String> sendStream({
+    required Chat chat,
+    required List<Message> history,
+    required String userText,
+    required void Function(String chunk) onDelta,
+    StreamBuffer? buffer,
+    bool alreadyPersistedUserText = false,
+  }) async* {
+    if (!alreadyPersistedUserText) {
+      final userMsg = Message(
+        chatId: chat.id!,
+        role: MessageRole.user,
+        content: userText,
+      );
+      await AppDatabase.instance.insertMessage(userMsg);
+    }
+
+    final userTurns = history
+        .where((m) =>
+            m.role == MessageRole.user || m.role == MessageRole.assistant)
+        .length ~/
+        2;
+    final recurring = _scheduler.pick(_config, userTurns);
+
+    final prompt = buildPrompt(
+      chat: chat,
+      visible: history,
+      config: _config,
+      recurringForThisTurn: recurring,
+    );
+    prompt.add(ApiMessage('user', userText));
+
+    final full = StringBuffer();
+    final stream = _client.chatStream(prompt);
+    await for (final ev in stream) {
+      if (ev.done) break;
+      final d = ev.delta;
+      if (d != null && d.isNotEmpty) {
+        full.write(d);
+        buffer?.add(d);
+        onDelta(d);
+      }
+    }
+
+    // 流结束:把缓冲冲完
+    await buffer?.flush();
+
+    // 落库助手消息
+    final assistant = Message(
+      chatId: chat.id!,
+      role: MessageRole.assistant,
+      content: full.toString(),
+    );
+    await AppDatabase.instance.insertMessage(assistant);
+
+    // 触摸对话时间
+    await AppDatabase.instance.touchChat(chat.id!);
+
+    // 触发后台压缩(非阻塞)
+    unawaited(maybeCompress(chatId: chat.id!));
+
+    yield full.toString();
+  }
+
+  /// 静默判断是否需要压缩
+  Future<void> maybeCompress({required int chatId}) async {
+    final ctx = _config.context;
+    final all =
+        await AppDatabase.instance.listMessages(chatId, includeCompressed: true);
+    final live = all.where((m) => !m.compressed).toList();
+    if (live.length < ctx.compressTriggerMessages) return;
+
+    final headCount = live.length - ctx.keepRecentMessages;
+    if (headCount <= 0) return;
+
+    final toCompress = live.take(headCount).toList();
+
+    final priorSummary = all
+        .where((m) => m.role == MessageRole.compressed)
+        .map((m) => m.content)
+        .join('\n');
+
+    final transcript = StringBuffer();
+    if (priorSummary.isNotEmpty) {
+      transcript.writeln('[已有摘要]\n$priorSummary\n');
+    }
+    for (final m in toCompress) {
+      transcript.writeln(
+          '[${m.role == MessageRole.user ? '用户' : '助手'}] ${m.content}');
+    }
+
+    final prompt = [
+      ApiMessage('system', ctx.compressPrompt),
+      ApiMessage('user', transcript.toString()),
+    ];
+
+    String summary;
+    try {
+      final model = ctx.compressModel.isNotEmpty ? ctx.compressModel : null;
+      summary = await _client.chatOnce(prompt,
+          overrideModel: model, temperature: 0.2);
+    } catch (_) {
+      return;
+    }
+    if (summary.trim().isEmpty) return;
+
+    final summaryMsg = Message(
+      chatId: chatId,
+      role: MessageRole.compressed,
+      content: summary.trim(),
+    );
+    await AppDatabase.instance.insertMessage(summaryMsg);
+    await AppDatabase.instance.markMessagesCompressed(
+        toCompress.map((m) => m.id!).toList());
+  }
+}

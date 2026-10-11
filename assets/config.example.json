@@ -1,0 +1,38 @@
+{
+  "ai": {
+    "endpoint": "https://api.example.com/v1/chat/completions",
+    "apiKey": "",
+    "model": "gpt-4o-mini",
+    "temperature": 0.7,
+    "maxTokens": 2048,
+    "requestTimeoutSeconds": 120
+  },
+  "context": {
+    "maxContextMessages": 40,
+    "compressTriggerMessages": 30,
+    "keepRecentMessages": 12,
+    "compressPrompt": "请把以下对话历史压缩成一段不超过 300 字的客观摘要,保留关键事实、约定、用户偏好和待办。不要添加原对话中没有的信息,不要使用第一人称。",
+    "compressModel": ""
+  },
+  "recurringPrompts": [
+    {
+      "id": "rp_safety",
+      "content": "在每轮回复中遵守以下规则:\n1. 不输出政治敏感内容。\n2. 引用外部事实时标注[来源未知]。\n3. 始终使用中文。",
+      "intervalTurns": 1,
+      "enabled": true
+    },
+    {
+      "id": "rp_format",
+      "content": "代码块必须使用 ```language 标记;长列表使用 markdown 列表。",
+      "intervalTurns": 5,
+      "enabled": true
+    }
+  ],
+  "systemPrompts": [
+    {
+      "id": "default",
+      "name": "默认助手",
+      "content": "你是一个 helpful 的中文助手。回答简洁、准确。"
+    }
+  ]
+}
