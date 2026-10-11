@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../db/app_database.dart';
+import '../main.dart' show ConfigScope;
+import '../models/app_config.dart';
 import '../models/chat.dart';
 import '../services/chat_service.dart';
 import '../utils/dialogs.dart';
@@ -272,15 +274,12 @@ class _ChatScreenState extends State<ChatScreen> {
                     );
                   }
                   // 流式占位
-                  return StreamBuilder<String>(
+                  return ValueListenableBuilder<String>(
                     key: const ValueKey('streaming'),
-                    stream: _buffer?.displayed ??
-                        const Stream<String>.empty(),
-                    initialData: '',
-                    builder: (_, snap) {
-                      return StreamingBubble(
-                        text: snap.data ?? '',
-                      );
+                    valueListenable:
+                        _buffer?.displayed ?? const ValueNotifier<String>(''),
+                    builder: (_, text, __) {
+                      return StreamingBubble(text: text);
                     },
                   );
                 },

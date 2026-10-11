@@ -130,7 +130,7 @@ class MessageBubble extends StatelessWidget {
                     Text(
                       _formatTime(message.createdAt),
                       style: theme.textTheme.bodySmall
-                          ?.copyWith(color: fg.withValues(alpha: 0.55)),
+                          ?.copyWith(color: fg.withOpacity(0.55)),
                     ),
                   ],
                 ),

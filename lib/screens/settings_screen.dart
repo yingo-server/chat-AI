@@ -366,6 +366,7 @@ extension on AiConfig {
     double? temperature,
     int? maxTokens,
     int? requestTimeoutSeconds,
+    double? streamCharsPerSecond,
   }) =>
       AiConfig(
         endpoint: endpoint ?? this.endpoint,
@@ -375,6 +376,8 @@ extension on AiConfig {
         maxTokens: maxTokens ?? this.maxTokens,
         requestTimeoutSeconds:
             requestTimeoutSeconds ?? this.requestTimeoutSeconds,
+        streamCharsPerSecond:
+            streamCharsPerSecond ?? this.streamCharsPerSecond,
       );
 }
 

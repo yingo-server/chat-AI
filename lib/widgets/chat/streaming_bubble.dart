@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../animation/message_animations.dart';
+
 /// 流式回复的气泡 — 内置打字光标
 /// 显示当前已缓冲的可见文本 + 闪烁光标
 class StreamingBubble extends StatelessWidget {

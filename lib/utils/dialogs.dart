@@ -6,9 +6,8 @@ void showSnack(BuildContext ctx, String msg, {bool error = false}) {
     SnackBar(
       content: Text(msg),
       behavior: SnackBarBehavior.floating,
-      backgroundColor: error
-          ? Theme.of(ctx).colorScheme.errorContainer
-          : null,
+      backgroundColor:
+          error ? Theme.of(ctx).colorScheme.errorContainer : null,
     ),
   );
 }
@@ -24,26 +23,22 @@ Future<bool> confirmDialog(
 }) async {
   final result = await showDialog<bool>(
     context: ctx,
-    builder: (_) => AlertDialog(
+    builder: (dialogCtx) => AlertDialog(
       title: Text(title),
       content: Text(message),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(cancelLabel)),
+          onPressed: () => Navigator.pop(dialogCtx, false),
+          child: Text(cancelLabel),
+        ),
         FilledButton(
           style: destructive
-              ? ButtonTheme
-                  .fromButtonThemeData(
-                    ButtonThemeData(),
-                  )
-                  .copyWith()
-                  .copyWith(
-                    backgroundColor:
-                        WidgetStateProperty.all(Colors.red.shade400),
-                  )
+              ? FilledButton.styleFrom(
+                  backgroundColor: Colors.red.shade400,
+                  foregroundColor: Colors.white,
+                )
               : null,
-          onPressed: () => Navigator.pop(ctx, true),
+          onPressed: () => Navigator.pop(dialogCtx, true),
           child: Text(confirmLabel),
         ),
       ],
@@ -61,7 +56,7 @@ Future<String?> inputDialog(
   final ctrl = TextEditingController(text: initialValue);
   return showDialog<String>(
     context: ctx,
-    builder: (_) => AlertDialog(
+    builder: (dialogCtx) => AlertDialog(
       title: Text(title),
       content: TextField(
         controller: ctrl,
@@ -70,10 +65,11 @@ Future<String?> inputDialog(
       ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消')),
+          onPressed: () => Navigator.pop(dialogCtx),
+          child: const Text('取消'),
+        ),
         FilledButton(
-          onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+          onPressed: () => Navigator.pop(dialogCtx, ctrl.text.trim()),
           child: const Text('确定'),
         ),
       ],

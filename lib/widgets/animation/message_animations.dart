@@ -6,8 +6,9 @@ import 'package:flutter/material.dart';
 /// - 删除:AnimatedSize 收缩
 class MessageAnimatedEntry extends StatelessWidget {
   final Widget child;
-  final Object key;
-  const MessageAnimatedEntry({super.key, required this.child, required this.key});
+  final Key entryKey;
+  const MessageAnimatedEntry(
+      {super.key, required this.child, required this.entryKey});
 
   @override
   Widget build(BuildContext context) {
@@ -29,7 +30,7 @@ class MessageAnimatedEntry extends StatelessWidget {
             child: SlideTransition(position: slide, child: child),
           );
         },
-        child: KeyedSubtree(key: key, child: child),
+        child: KeyedSubtree(key: entryKey, child: child),
       ),
     );
   }

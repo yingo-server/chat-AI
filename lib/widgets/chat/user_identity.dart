@@ -91,8 +91,8 @@ class MessageStatusChip extends StatelessWidget {
     }
     return Chip(
       visualDensity: VisualDensity.compact,
-      backgroundColor: color.withValues(alpha: 0.10),
-      side: BorderSide(color: color.withValues(alpha: 0.30)),
+      backgroundColor: color.withOpacity(0.10),
+      side: BorderSide(color: color.withOpacity(0.30)),
       avatar: Icon(icon, color: color, size: 14),
       label: Text(label, style: TextStyle(color: color, fontSize: 11)),
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,

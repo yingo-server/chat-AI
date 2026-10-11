@@ -3,13 +3,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../models/chat.dart';
 import '../services/export_service.dart';
 
 /// 导出对话框 — 选择格式并分享
 Future<void> showExportSheet(
   BuildContext ctx, {
-  required dynamic chat,
-  required List<dynamic> messages,
+  required Chat chat,
+  required List<Message> messages,
 }) async {
   final fmt = await showModalBottomSheet<ExportFormat>(
     context: ctx,
