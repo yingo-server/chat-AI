@@ -18,7 +18,7 @@ import '../widgets/stream/stream_buffer.dart';
 import 'settings_screen.dart';
 
 /// 占位 ValueNotifier — 当没有活跃缓冲时使用,避免每帧重建
-final _EmptyTextNotifier = ValueNotifier<String>('');
+final _emptyTextNotifier = ValueNotifier<String>('');
 
 class ChatScreen extends StatefulWidget {
   final Chat chat;
@@ -281,7 +281,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   return ValueListenableBuilder<String>(
                     key: const ValueKey('streaming'),
                     valueListenable:
-                        _buffer?.displayed ?? _EmptyTextNotifier.instance,
+                        _buffer?.displayed ?? _emptyTextNotifier,
                     builder: (_, text, __) {
                       return StreamingBubble(text: text);
                     },

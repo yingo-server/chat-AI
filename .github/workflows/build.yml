@@ -32,6 +32,25 @@ jobs:
           flutter-version: '3.24.5'
           channel: stable
 
+      - name: Verify Flutter
+        run: flutter --version
+
+      # 若仓库只有 Dart 代码,没有 android/ 平台壳,补一个最小壳
+      - name: Ensure Android platform
+        run: |
+          if [ ! -d android ]; then
+            echo "Scaffolding android/ via flutter create"
+            # 备份现有的 main.dart(脚手架会覆盖)
+            cp lib/main.dart lib/main.dart.bak || true
+            # 把整个 lib/assets 备份
+            cp -r lib /tmp/lib.bak || true
+            flutter create . --platforms android --org com.local --project-name chat_ai
+            # 恢复真正的项目文件
+            rm -rf lib/assets
+            cp -r /tmp/lib.bak/* lib/
+            rm -rf test/widget_test.dart
+          fi
+
       - name: Cache pub
         uses: actions/cache@v4
         with:
