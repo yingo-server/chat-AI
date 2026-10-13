@@ -30,6 +30,16 @@
 -keep class com.google.crypto.tink.** { *; }
 -dontwarn com.google.crypto.tink.**
 
+# Flutter Play Store Split (我们不发布到 Play Store,这些类没有)
+-dontwarn com.google.android.play.core.**
+-dontwarn io.flutter.embedding.engine.deferredcomponents.**
+-keep class io.flutter.embedding.engine.deferredcomponents.** { *; }
+
+# Vault native FFI
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+
 # 移除 log
 -assumenosideeffects class android.util.Log {
     public static int v(...);
