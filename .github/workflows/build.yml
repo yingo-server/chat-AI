@@ -203,7 +203,9 @@ jobs:
       - name: zip max compression
         run: |
           cd stage
-          for f in chat-ai-*; do
+          # 只对原文件打 zip(不动 *.7z 已有产物,避免出现 *.7z.zip 重复)
+          for f in chat-ai-*.apk chat-ai-*.aab; do
+            [ -e "$f" ] || continue
             zip -9 -X -q "${f}.zip" "$f"
             sz=$(du -b "${f}.zip" | cut -f1)
             echo "zip ${f}: $((sz/1024)) KB"
