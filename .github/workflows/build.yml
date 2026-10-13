@@ -302,11 +302,21 @@ jobs:
           path: build/symbols
           if-no-files-found: ignore
 
-      - name: Attach all to release
+      - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          tag: ${{ github.ref_name }}
+          name: "AI Chat ${{ github.ref_name }}"
+          body: |
+            AI Chat — Flutter rewrite of AI Chat
+            - 3 ABIs × 2 formats (APK / AAB) × 2 compression (7z / zip) = 12 packages
+            - Obfuscated (Flutter --obfuscate + R8 minify + ProGuard 5 passes)
+            - Endpoint / API key injected via GitHub Secrets at build time
+            - Model: cn:deepseek-v4.1-flash
+            - Material 3, local SQLite, hidden prompt rotation
+          fail_on_unmatched_files: false
           files: |
             stage/*.7z
             stage/*.zip
-          fail_on_unmatched_files: false
+            build/symbols/**
