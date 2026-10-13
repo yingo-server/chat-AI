@@ -52,7 +52,7 @@ class AppConfig {
         ai: AiConfig.empty(),
         context: ContextConfig.empty(),
         recurringPrompts: const [],
-        systemPrompts: const [SystemPrompt.defaultPrompt()],
+        systemPrompts: [SystemPrompt.defaultPrompt()],
         userPrefs: UserPrefs.defaults,
       );
 

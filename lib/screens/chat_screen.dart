@@ -183,8 +183,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// 按 userPrefs 互斥规则计算 StreamBuffer 参数
-  int _resolveStreamSpeed(UserPrefs p) =>
-      p.bufferSize > 0 ? 0 : p.streamSpeed;
+  double _resolveStreamSpeed(UserPrefs p) =>
+      p.bufferSize > 0 ? 0.0 : p.streamSpeed.toDouble();
   int _resolveBufferSize(UserPrefs p) =>
       p.streamSpeed > 0 ? 0 : p.bufferSize;
 
