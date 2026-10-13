@@ -1,4 +1,4 @@
-name: Build & Package 6-split Android binaries
+name: Build & Package Android (per-ABI parallel)
 
 on:
   push:
@@ -12,71 +12,21 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  # ---- 一次:生成 vault.bin + 装依赖 ----
+  prep:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-
+    timeout-minutes: 20
+    outputs:
+      vault_ok: ${{ steps.gen_vault.outcome }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: '3.24.5', channel: stable }
 
-      - name: Setup JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.24.5'
-          channel: stable
-
-      - name: Verify Flutter
-        run: flutter --version
-
-      - name: Ensure Android platform
-        run: |
-          if [ ! -d android ]; then
-            cp lib/main.dart lib/main.dart.bak || true
-            cp -r lib /tmp/lib.bak || true
-            flutter create . --platforms android --org com.local --project-name chat_ai
-            rm -rf lib/assets
-            cp -r /tmp/lib.bak/* lib/
-            rm -rf test/widget_test.dart
-          fi
-          # 替换默认 build.gradle 为带 native build 的版本
-          cp tools/app.build.gradle android/app/build.gradle
-          # 替换 gradle.properties
-          cp tools/gradle.properties android/gradle.properties
-          # 替换 proguard-rules.pro
-          cp tools/proguard-rules.pro android/app/proguard-rules.pro
-          # 拷 cpp 源
-          mkdir -p android/app/src/main/cpp
-          cp tools/vault.cpp android/app/src/main/cpp/vault.cpp
-          cp tools/CMakeLists.txt android/app/src/main/cpp/CMakeLists.txt
-          # 设置 minSdkVersion 23
-          sed -i 's/minSdkVersion 21/minSdkVersion 23/g' android/app/build.gradle || true
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' android/app/build.gradle || true
-
-      - name: Enable R8 / minify / proguard
-        run: |
-          BUILD_GRADLE=android/app/build.gradle
-          sed -i 's/minifyEnabled false/minifyEnabled true/g' "$BUILD_GRADLE" || true
-          sed -i 's/shrinkResources false/shrinkResources true/g' "$BUILD_GRADLE" || true
-
-      - name: Cache pub
-        uses: actions/cache@v4
-        with:
-          path: ~/.pub-cache
-          key: pub-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
-          restore-keys: pub-${{ runner.os }}-
-
-      - name: Pub get
-        run: flutter pub get
-
-      # ---- 关键步骤:加密 secrets 生成 vault.bin ----
       - name: Encrypt secrets into vault.bin
+        id: gen_vault
         env:
           API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
           API_KEY: ${{ secrets.API_KEY }}
@@ -92,20 +42,73 @@ jobs:
             --key="$API_KEY" \
             --master="$VAULT_MASTER" \
             --out=assets/vault.bin
-          # 立刻清掉环境变量
           unset API_KEY API_ENDPOINT VAULT_MASTER
           ls -lh assets/vault.bin
 
-      - name: Verify vault.bin
+      - name: Verify vault.bin (no plaintext)
         run: |
-          # 必须能 grep 到 VLT1 魔数
-          head -c 4 assets/vault.bin | xxd | head -1
-          # 不能有明文 endpoint/key
           if strings assets/vault.bin | grep -E "server\.344977|00000000|wbk_" ; then
-            echo "::error::vault.bin contains plaintext secrets!"
-            exit 1
+            echo "::error::vault.bin contains plaintext secrets!"; exit 1
           fi
           echo "vault.bin OK (no plaintext)"
+
+      - name: Upload vault.bin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vault-bin
+          path: assets/vault.bin
+          if-no-files-found: error
+
+  # ---- 三次构建:每个 ABI 独立 job,互不阻塞 ----
+  build-arm64:
+    needs: prep
+    if: success() || failure()  # prep 失败不阻断(可能 vault.bin 已有)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: '3.24.5', channel: stable }
+
+      - name: Ensure Android platform + cpp
+        run: |
+          if [ ! -d android ]; then
+            cp lib/main.dart lib/main.dart.bak || true
+            cp -r lib /tmp/lib.bak || true
+            flutter create . --platforms android --org com.local --project-name chat_ai
+            rm -rf lib/assets
+            cp -r /tmp/lib.bak/* lib/
+            rm -rf test/widget_test.dart
+          fi
+          cp tools/app.build.gradle android/app/build.gradle
+          cp tools/gradle.properties android/gradle.properties
+          cp tools/proguard-rules.pro android/app/proguard-rules.pro
+          mkdir -p android/app/src/main/cpp
+          cp tools/vault.cpp android/app/src/main/cpp/vault.cpp
+          cp tools/CMakeLists.txt android/app/src/main/cpp/CMakeLists.txt
+          sed -i 's/minSdkVersion 21/minSdkVersion 23/g' android/app/build.gradle || true
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' android/app/build.gradle || true
+          sed -i 's/minifyEnabled false/minifyEnabled true/g' android/app/build.gradle
+          sed -i 's/shrinkResources false/shrinkResources true/g' android/app/build.gradle
+
+      - name: Restore vault.bin
+        uses: actions/download-artifact@v4
+        with:
+          name: vault-bin
+          path: assets/
+        continue-on-error: true
+
+      - name: Cache pub
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      - name: Pub get
+        run: flutter pub get
 
       - name: Analyze
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
@@ -118,29 +121,10 @@ jobs:
         run: |
           flutter build apk --release --obfuscate \
             --split-debug-info=build/symbols \
-            --target-platform=android-arm64
+            --target-platform=android-arm64 || exit 1
           mkdir -p stage
           find build/app/outputs/flutter-apk -name "*.apk" -exec cp {} stage/chat-ai-arm64.apk \;
           find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-arm64.aab \; 2>/dev/null || true
-          rm -rf build/app/outputs/flutter-apk build/app/outputs/bundle build/app/outputs/apk
-
-      - name: Build APK armv7
-        run: |
-          flutter build apk --release --obfuscate \
-            --split-debug-info=build/symbols \
-            --target-platform=android-arm
-          find build/app/outputs/flutter-apk -name "*.apk" -exec cp {} stage/chat-ai-armv7.apk \;
-          find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-armv7.aab \; 2>/dev/null || true
-          rm -rf build/app/outputs/flutter-apk build/app/outputs/bundle build/app/outputs/apk
-
-      - name: Build APK x86_64
-        run: |
-          flutter build apk --release --obfuscate \
-            --split-debug-info=build/symbols \
-            --target-platform=android-x64
-          find build/app/outputs/flutter-apk -name "*.apk" -exec cp {} stage/chat-ai-x64.apk \;
-          find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-x64.aab \; 2>/dev/null || true
-          rm -rf build/app/outputs/flutter-apk build/app/outputs/bundle build/app/outputs/apk
 
       - name: Build AAB arm64
         run: |
@@ -148,7 +132,92 @@ jobs:
             --split-debug-info=build/symbols \
             --target-platform=android-arm64
           find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-arm64.aab \;
-          rm -rf build/app/outputs/flutter-apk build/app/outputs/bundle build/app/outputs/apk
+
+      - name: Compress
+        run: |
+          cd stage
+          for f in chat-ai-*; do
+            7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=64m -ms=on "${f}.7z" "$f" >/dev/null
+          done
+          for f in chat-ai-*.apk chat-ai-*.aab; do
+            [ -e "$f" ] || continue
+            zip -9 -X -q "${f}.zip" "$f"
+          done
+          ls -lh
+        continue-on-error: true
+
+      - name: Upload arm64 packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-ai-arm64-packages
+          path: stage/
+          if-no-files-found: warn
+
+  build-armv7:
+    needs: prep
+    if: success() || failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: '3.24.5', channel: stable }
+
+      - name: Ensure Android platform + cpp
+        run: |
+          if [ ! -d android ]; then
+            cp lib/main.dart lib/main.dart.bak || true
+            cp -r lib /tmp/lib.bak || true
+            flutter create . --platforms android --org com.local --project-name chat_ai
+            rm -rf lib/assets
+            cp -r /tmp/lib.bak/* lib/
+            rm -rf test/widget_test.dart
+          fi
+          cp tools/app.build.gradle android/app/build.gradle
+          cp tools/gradle.properties android/gradle.properties
+          cp tools/proguard-rules.pro android/app/proguard-rules.pro
+          mkdir -p android/app/src/main/cpp
+          cp tools/vault.cpp android/app/src/main/cpp/vault.cpp
+          cp tools/CMakeLists.txt android/app/src/main/cpp/CMakeLists.txt
+          sed -i 's/minSdkVersion 21/minSdkVersion 23/g' android/app/build.gradle || true
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' android/app/build.gradle || true
+          sed -i 's/minifyEnabled false/minifyEnabled true/g' android/app/build.gradle
+          sed -i 's/shrinkResources false/shrinkResources true/g' android/app/build.gradle
+
+      - name: Restore vault.bin
+        uses: actions/download-artifact@v4
+        with:
+          name: vault-bin
+          path: assets/
+        continue-on-error: true
+
+      - name: Cache pub
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+        continue-on-error: true
+
+      - name: Install p7zip-full + zip
+        run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full zip
+
+      - name: Build APK armv7
+        run: |
+          flutter build apk --release --obfuscate \
+            --split-debug-info=build/symbols \
+            --target-platform=android-arm || exit 1
+          mkdir -p stage
+          find build/app/outputs/flutter-apk -name "*.apk" -exec cp {} stage/chat-ai-armv7.apk \;
+          find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-armv7.aab \; 2>/dev/null || true
 
       - name: Build AAB armv7
         run: |
@@ -156,7 +225,92 @@ jobs:
             --split-debug-info=build/symbols \
             --target-platform=android-arm
           find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-armv7.aab \;
-          rm -rf build/app/outputs/flutter-apk build/app/outputs/bundle build/app/outputs/apk
+
+      - name: Compress
+        run: |
+          cd stage
+          for f in chat-ai-*; do
+            7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=64m -ms=on "${f}.7z" "$f" >/dev/null
+          done
+          for f in chat-ai-*.apk chat-ai-*.aab; do
+            [ -e "$f" ] || continue
+            zip -9 -X -q "${f}.zip" "$f"
+          done
+          ls -lh
+        continue-on-error: true
+
+      - name: Upload armv7 packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-ai-armv7-packages
+          path: stage/
+          if-no-files-found: warn
+
+  build-x64:
+    needs: prep
+    if: success() || failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: '3.24.5', channel: stable }
+
+      - name: Ensure Android platform + cpp
+        run: |
+          if [ ! -d android ]; then
+            cp lib/main.dart lib/main.dart.bak || true
+            cp -r lib /tmp/lib.bak || true
+            flutter create . --platforms android --org com.local --project-name chat_ai
+            rm -rf lib/assets
+            cp -r /tmp/lib.bak/* lib/
+            rm -rf test/widget_test.dart
+          fi
+          cp tools/app.build.gradle android/app/build.gradle
+          cp tools/gradle.properties android/gradle.properties
+          cp tools/proguard-rules.pro android/app/proguard-rules.pro
+          mkdir -p android/app/src/main/cpp
+          cp tools/vault.cpp android/app/src/main/cpp/vault.cpp
+          cp tools/CMakeLists.txt android/app/src/main/cpp/CMakeLists.txt
+          sed -i 's/minSdkVersion 21/minSdkVersion 23/g' android/app/build.gradle || true
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' android/app/build.gradle || true
+          sed -i 's/minifyEnabled false/minifyEnabled true/g' android/app/build.gradle
+          sed -i 's/shrinkResources false/shrinkResources true/g' android/app/build.gradle
+
+      - name: Restore vault.bin
+        uses: actions/download-artifact@v4
+        with:
+          name: vault-bin
+          path: assets/
+        continue-on-error: true
+
+      - name: Cache pub
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+        continue-on-error: true
+
+      - name: Install p7zip-full + zip
+        run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full zip
+
+      - name: Build APK x86_64
+        run: |
+          flutter build apk --release --obfuscate \
+            --split-debug-info=build/symbols \
+            --target-platform=android-x64 || exit 1
+          mkdir -p stage
+          find build/app/outputs/flutter-apk -name "*.apk" -exec cp {} stage/chat-ai-x64.apk \;
+          find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-x64.aab \; 2>/dev/null || true
 
       - name: Build AAB x86_64
         run: |
@@ -164,57 +318,66 @@ jobs:
             --split-debug-info=build/symbols \
             --target-platform=android-x64
           find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-x64.aab \;
-          ls -lh stage/
 
-      - name: 7z ultra compression
+      - name: Compress
         run: |
           cd stage
           for f in chat-ai-*; do
             7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=64m -ms=on "${f}.7z" "$f" >/dev/null
-            sz=$(du -b "${f}.7z" | cut -f1)
-            echo "7z ${f}: $((sz/1024)) KB"
           done
-
-      - name: zip max compression
-        run: |
-          cd stage
           for f in chat-ai-*.apk chat-ai-*.aab; do
             [ -e "$f" ] || continue
             zip -9 -X -q "${f}.zip" "$f"
-            sz=$(du -b "${f}.zip" | cut -f1)
-            echo "zip ${f}: $((sz/1024)) KB"
           done
           ls -lh
+        continue-on-error: true
 
-      - name: Upload all
+      - name: Upload x64 packages
         uses: actions/upload-artifact@v4
         with:
-          name: chat-ai-packages
+          name: chat-ai-x64-packages
           path: stage/
-          if-no-files-found: error
+          if-no-files-found: warn
 
-      - name: Upload obfuscation symbols
-        uses: actions/upload-artifact@v4
+  # ---- Release:任一 build 成功就发布 ----
+  release:
+    needs:
+      - build-arm64
+      - build-armv7
+      - build-x64
+    if: always() && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download all per-ABI packages
+        uses: actions/download-artifact@v4
         with:
-          name: debug-symbols
-          path: build/symbols
-          if-no-files-found: ignore
+          path: release-stage
+          pattern: chat-ai-*-packages
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: List downloaded packages
+        run: |
+          find release-stage -type f 2>/dev/null | head -20
+          echo "---"
+          du -sh release-stage 2>/dev/null
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           tag: ${{ github.ref_name }}
           name: "AI Chat ${{ github.ref_name }}"
           body: |
             AI Chat — Flutter + native vault
-            - 3 ABIs × 2 formats × 2 compression (7z/zip) — 12 packages
+
+            - 3 ABIs × 2 formats (APK / AAB) × 2 compression (7z / zip) — up to 12 packages
             - Endpoint / API key encrypted in native libvault.so (AES-256-CTR)
-            - Master key stored in Android Keystore
+            - Master key in Android Keystore
             - Anti-debug / anti-root / anti-emulator detection
             - Flutter --obfuscate + R8 + ProGuard 5-pass
-            - Model: cn:deepseek-v4.1-flash (1M ctx)
-          fail_on_unmatched_files: false
+            - Model: cn:deepseek-v4-flash (1M ctx, reasoning_effort toggled per turn)
+          fail_on_unmatched_files: true
           files: |
-            stage/*.7z
-            stage/*.zip
+            release-stage/**/*.7z
+            release-stage/**/*.zip

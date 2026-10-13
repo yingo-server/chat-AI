@@ -14,14 +14,13 @@ Future<void> main() async {
 
   // 1) 启动 native vault(从 Android Keystore 拿 master,解密 vault.bin)
   final r = await vault.Vault.init();
+  // 即便 vault init 失败也继续(返回空 endpoint/key,UI 弹错)
 
   // 2) 加载 config.json(只含 prefs/context/prompts)
   final store = ConfigStore();
   final cfg = await store.load();
 
   // 3) 把 vault 端点/密钥塞入 AiConfig
-  //    (AiConfig.fromJson 内部会自动 fromVault,但我们这里直接 replace)
-  cfg.ai; // 触发构造(已经走 fromVault)
   final config = AppConfig(
     ai: AiConfig.fromVault(),
     context: cfg.context,

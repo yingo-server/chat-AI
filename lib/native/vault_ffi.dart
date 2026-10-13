@@ -1,6 +1,7 @@
 // lib/native/vault_ffi.dart — FFI 绑定到 libvault.so
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
@@ -61,7 +62,6 @@ class VaultFfi {
       ptr.asTypedList(key.length).setAll(0, key);
       return _setMaster(ptr, key.length);
     } finally {
-      // 主动 wipe
       ptr.asTypedList(key.length).fillRange(0, key.length, 0);
       malloc.free(ptr);
     }
