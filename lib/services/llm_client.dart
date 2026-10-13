@@ -14,24 +14,46 @@ class ApiMessage {
   Map<String, dynamic> toJson() => {'role': role, 'content': content};
 }
 
+class _ChatRequest {
+  final List<ApiMessage> messages;
+  final String? reasoningEffort; // 'low' / 'high' / 'max' / 'none' / null
+  const _ChatRequest(this.messages, this.reasoningEffort);
+}
+
 /// 流式客户端 — 解析 SSE 的 `data: {...}` 帧
 class LlmStreamClient {
   final AiConfig config;
   LlmStreamClient(this.config);
 
   /// 流式调用。每次拿到增量文本时调用 [onDelta]。
-  /// 抛错时会通过 [onError];正常结束会调用 [onDone]。
-  Stream<LlmEvent> chatStream(List<ApiMessage> messages) {
+  /// [firstTurn]=true 时,使用 [AiConfig.firstTurnReasoning];否则 [AiConfig.subsequentReasoning]。
+  Stream<LlmEvent> chatStream(
+    List<ApiMessage> messages, {
+    bool firstTurn = false,
+  }) {
+    final effort = firstTurn
+        ? config.firstTurnReasoning
+        : config.subsequentReasoning;
+    return _streamInternal(messages, reasoningEffort: effort);
+  }
+
+  Stream<LlmEvent> _streamInternal(
+    List<ApiMessage> messages, {
+    String? reasoningEffort,
+  }) {
     final controller = StreamController<LlmEvent>();
     final client = http.Client();
 
-    final body = jsonEncode({
+    final body = <String, dynamic>{
       'model': config.model,
       'temperature': config.temperature,
       'max_tokens': config.maxTokens,
       'stream': true,
       'messages': messages.map((e) => e.toJson()).toList(),
-    });
+    };
+    if (reasoningEffort != null && reasoningEffort.isNotEmpty) {
+      body['reasoning_effort'] = reasoningEffort;
+    }
 
     Future<void> run() async {
       try {
@@ -41,7 +63,7 @@ class LlmStreamClient {
             'Authorization': 'Bearer ${config.apiKey}',
             'Accept': 'text/event-stream',
           })
-          ..body = body;
+          ..body = jsonEncode(body);
         final resp = await client.send(req).timeout(
               Duration(seconds: config.requestTimeoutSeconds),
             );
@@ -59,7 +81,6 @@ class LlmStreamClient {
             in resp.stream.transform(decoder).transform(const LineSplitter())) {
           if (controller.isClosed) break;
           buffer += chunk;
-          // 解析完整 data: 行
           while (true) {
             final idx = buffer.indexOf('\n');
             if (idx < 0) break;
@@ -80,7 +101,6 @@ class LlmStreamClient {
               if (delta is String && delta.isNotEmpty) {
                 controller.add(LlmEvent.delta(delta));
               }
-              // 可选:提取 usage(非流式末尾才会出现)
               final usage = j['usage'];
               if (usage is Map) {
                 controller.add(LlmEvent.usage(usage.cast()));
@@ -104,17 +124,24 @@ class LlmStreamClient {
   }
 
   /// 非流式单次调用(用于压缩)
-  Future<String> chatOnce(List<ApiMessage> messages,
-      {String? overrideModel, double? temperature}) async {
+  Future<String> chatOnce(
+    List<ApiMessage> messages, {
+    String? overrideModel,
+    double? temperature,
+    String? reasoningEffort,
+  }) async {
     final m = overrideModel ?? config.model;
     final t = temperature ?? config.temperature;
-    final body = jsonEncode({
+    final body = <String, dynamic>{
       'model': m,
       'temperature': t,
       'max_tokens': config.maxTokens,
       'stream': false,
       'messages': messages.map((e) => e.toJson()).toList(),
-    });
+    };
+    if (reasoningEffort != null && reasoningEffort.isNotEmpty) {
+      body['reasoning_effort'] = reasoningEffort;
+    }
     final resp = await http
         .post(
           Uri.parse(config.endpoint),
@@ -122,7 +149,7 @@ class LlmStreamClient {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer ${config.apiKey}',
           },
-          body: body,
+          body: jsonEncode(body),
         )
         .timeout(Duration(seconds: config.requestTimeoutSeconds));
     if (resp.statusCode != 200) {

@@ -130,6 +130,11 @@ class AiConfig {
   final int requestTimeoutSeconds;
   final double streamCharsPerSecond;
 
+  /// 推理 effort(只对支持 thinking 的模型生效)
+  /// 'low' / 'high' / 'max' / 'none'
+  final String firstTurnReasoning;  // 对话首条 user 消息
+  final String subsequentReasoning; // 对话之后消息
+
   AiConfig({
     required this.endpoint,
     required this.apiKey,
@@ -138,16 +143,20 @@ class AiConfig {
     required this.maxTokens,
     required this.requestTimeoutSeconds,
     required this.streamCharsPerSecond,
+    required this.firstTurnReasoning,
+    required this.subsequentReasoning,
   });
 
   factory AiConfig.empty() => AiConfig(
         endpoint: '',
         apiKey: '',
-        model: 'cn:deepseek-v4.1-flash',
+        model: 'cn:deepseek-v4-flash',
         temperature: 0.7,
         maxTokens: 16384,
         requestTimeoutSeconds: 120,
         streamCharsPerSecond: 24,
+        firstTurnReasoning: 'low',
+        subsequentReasoning: 'none',
       );
 
   /// 从 native vault 读 endpoint + key
@@ -157,11 +166,13 @@ class AiConfig {
     return AiConfig(
       endpoint: ep,
       apiKey: k,
-      model: 'cn:deepseek-v4.1-flash',
+      model: 'cn:deepseek-v4-flash',
       temperature: 0.7,
       maxTokens: 16384,
       requestTimeoutSeconds: 120,
       streamCharsPerSecond: 24,
+      firstTurnReasoning: 'low',
+      subsequentReasoning: 'none',
     );
   }
 
@@ -175,6 +186,8 @@ class AiConfig {
     int? maxTokens,
     int? requestTimeoutSeconds,
     double? streamCharsPerSecond,
+    String? firstTurnReasoning,
+    String? subsequentReasoning,
   }) =>
       AiConfig(
         endpoint: endpoint ?? this.endpoint,
@@ -186,6 +199,9 @@ class AiConfig {
             requestTimeoutSeconds ?? this.requestTimeoutSeconds,
         streamCharsPerSecond:
             streamCharsPerSecond ?? this.streamCharsPerSecond,
+        firstTurnReasoning: firstTurnReasoning ?? this.firstTurnReasoning,
+        subsequentReasoning:
+            subsequentReasoning ?? this.subsequentReasoning,
       );
 }
 

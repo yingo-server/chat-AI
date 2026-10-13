@@ -153,8 +153,8 @@ class _Aes256 {
     }
   }
 
-  void encryptBlock(List<int> in, List<int> out) {
-    final s = List<int>.from(in);
+  void encryptBlock(List<int> input, List<int> output) {
+    final s = List<int>.from(input);
     _addRoundKey(s, 0);
     for (var r = 1; r < _rounds; r++) {
       _subBytes(s);
@@ -165,7 +165,7 @@ class _Aes256 {
     _subBytes(s);
     _shiftRows(s);
     _addRoundKey(s, _rounds * 4);
-    for (var i = 0; i < 16; i++) out[i] = s[i];
+    for (var i = 0; i < 16; i++) output[i] = s[i];
   }
 
   void _subBytes(List<int> s) {

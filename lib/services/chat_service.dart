@@ -84,6 +84,9 @@ class ChatService {
             .length ~/
         2;
     final injectHidden = _scheduler.shouldInjectHidden(userTurns);
+    // 首轮:userTurns == 0(对话没历史 user-assistant 对)=> 用 firstTurnReasoning
+    // 之后:用 subsequentReasoning(默认 'none' = 关闭思考)
+    final isFirstTurn = userTurns == 0;
 
     final prompt = buildPrompt(
       chat: chat,
@@ -94,7 +97,7 @@ class ChatService {
     prompt.add(ApiMessage('user', userText));
 
     final full = StringBuffer();
-    final stream = _client.chatStream(prompt);
+    final stream = _client.chatStream(prompt, firstTurn: isFirstTurn);
     await for (final ev in stream) {
       if (ev.done) break;
       final d = ev.delta;
@@ -154,7 +157,9 @@ class ChatService {
     try {
       final model = ctx.compressModel.isNotEmpty ? ctx.compressModel : null;
       summary = await _client.chatOnce(prompt,
-          overrideModel: model, temperature: 0.2);
+          overrideModel: model,
+          temperature: 0.2,
+          reasoningEffort: 'none');
     } catch (_) {
       return;
     }
