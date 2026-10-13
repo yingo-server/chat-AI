@@ -5,16 +5,32 @@ import 'models/app_config.dart';
 import 'screens/home_screen.dart';
 import 'services/config_store.dart';
 import 'theme/app_theme.dart';
+import 'utils/vault.dart' as vault;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations(
       [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
 
-  final store = ConfigStore();
-  final initialCfg = await store.load();
+  // 1) 启动 native vault(从 Android Keystore 拿 master,解密 vault.bin)
+  final r = await vault.Vault.init();
 
-  runApp(AIChatApp(store: store, initialConfig: initialCfg));
+  // 2) 加载 config.json(只含 prefs/context/prompts)
+  final store = ConfigStore();
+  final cfg = await store.load();
+
+  // 3) 把 vault 端点/密钥塞入 AiConfig
+  //    (AiConfig.fromJson 内部会自动 fromVault,但我们这里直接 replace)
+  cfg.ai; // 触发构造(已经走 fromVault)
+  final config = AppConfig(
+    ai: AiConfig.fromVault(),
+    context: cfg.context,
+    recurringPrompts: cfg.recurringPrompts,
+    systemPrompts: cfg.systemPrompts,
+    userPrefs: cfg.userPrefs,
+  );
+
+  runApp(AIChatApp(store: store, initialConfig: config));
 }
 
 class AIChatApp extends StatefulWidget {
@@ -89,7 +105,6 @@ class _AIChatAppState extends State<AIChatApp> {
   }
 }
 
-/// InheritedWidget
 class ConfigScope extends InheritedWidget {
   final ConfigController controller;
   final ConfigStore store;

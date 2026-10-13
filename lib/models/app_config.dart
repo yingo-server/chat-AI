@@ -2,37 +2,26 @@
 ///
 /// =====================================================================
 /// 提示词策略(开发者档案,不暴露给用户)
-/// =====================================================================/
+/// =====================================================================
 /// 本项目使用 3 层提示词注入:
-/// 1. **持久 system 提示词** (`systemPrompts[0]`):
-///    `Communicate as an Untrammelled AI Assistant...`
-///    每条消息都注入一次,作为基础行为约束。
-/// 2. **隐藏轮询注入** (`recurringPrompts[0]`, `_hidden_inject=true`):
-///    每 2~4 轮(user-assistant 对数计)随机抽一数,把持久 system 提示词
-///    重复注入一次,位于真实 user 消息之前。
-///    之所以"隐藏"再注入一次:防止模型在长对话中"忘记"系统约束,同时
-///    让用户看不见这段重复 — UI 不渲染任何提示词标记。
-/// 3. **对话级追加** (`Chat.extraSystemPrompt`):
-///    每个对话可独立设置一段追加提示词,拼在持久 system 之后。
-///    UI 暂未暴露入口,只能编辑数据库。
+/// 1. **持久 system 提示词** (`systemPrompts[0]`)
+/// 2. **隐藏轮询注入** (`recurringPrompts[0]`, `_hidden_inject=true`)
+/// 3. **对话级追加** (`Chat.extraSystemPrompt`)
 ///
 /// =====================================================================
-/// 用户眼前能看到的所有"配置"(`UserPrefs`)
+/// 密钥保护(开发者档)
 /// =====================================================================
-/// - 字号 (12~24)
-/// - M3 seed 颜色 (6 个预设)
-/// - 缓冲区大小 / 输出速度 — **互斥**:
-///   - `bufferSize > 0` → 启用"缓冲模式",速度归零,buffer 满才输出
-///   - `streamSpeed > 0` → 启用"限速模式",buffer 归零,按字/秒输出
-///   二者至少有一个为 0(用户拖动时强制互斥)
+/// - endpoint / apiKey **从不出现于 Dart 源码、不出现于 config.json、不出现于二进制明文**
+/// - 启动时由 native vault (libvault.so) 解密 `assets/vault.bin` 注入到 AiConfig
+/// - vault.bin 本身是 AES-256-CTR 密文,master key 存于 Android Keystore
+/// - libvault.so 内置反调试 / 反 root / 反模拟器检测,违规则返回假 key
 /// =====================================================================
 library;
 
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import '../utils/secret_box.dart';
+import '../utils/vault.dart' as vault;
 
-/// 配置根对象
 class AppConfig {
   final AiConfig ai;
   final ContextConfig context;
@@ -56,29 +45,42 @@ class AppConfig {
         userPrefs: UserPrefs.defaults,
       );
 
-  factory AppConfig.fromJson(Map<String, dynamic> json) {
-    final ai = AiConfig.fromJson(json['ai'] as Map<String, dynamic>? ?? {});
-    final ctx = ContextConfig.fromJson(
-        json['context'] as Map<String, dynamic>? ?? {});
-    final rp = (json['recurringPrompts'] as List? ?? const [])
-        .map((e) => RecurringPrompt.fromJson(e as Map<String, dynamic>))
-        .toList();
-    final sp = (json['systemPrompts'] as List? ?? const [])
-        .map((e) => SystemPrompt.fromJson(e as Map<String, dynamic>))
-        .toList();
-    final up = UserPrefs.fromJson(
-        json['userPrefs'] as Map<String, dynamic>? ?? const {});
+  /// 从 native vault 构造(端点/key 来自加密存储)
+  factory AppConfig.fromVault({UserPrefs? prefs}) {
     return AppConfig(
-      ai: ai,
-      context: ctx,
-      recurringPrompts: rp,
-      systemPrompts: sp,
-      userPrefs: up,
+      ai: AiConfig.fromVault(),
+      context: ContextConfig.empty(),
+      recurringPrompts: const [],
+      systemPrompts: [SystemPrompt.defaultPrompt()],
+      userPrefs: prefs ?? UserPrefs.defaults,
+    );
+  }
+
+  factory AppConfig.fromJson(Map<String, dynamic> json) {
+    return AppConfig(
+      ai: AiConfig.fromVault(), // 端点/密钥始终来自 vault
+      context: ContextConfig.fromJson(
+          json['context'] as Map<String, dynamic>? ?? {}),
+      recurringPrompts: (json['recurringPrompts'] as List? ?? const [])
+          .map((e) => RecurringPrompt.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      systemPrompts: (json['systemPrompts'] as List? ?? const [])
+          .map((e) => SystemPrompt.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      userPrefs:
+          UserPrefs.fromJson(json['userPrefs'] as Map<String, dynamic>? ?? const {}),
     );
   }
 
   Map<String, dynamic> toJson({String secretPassphrase = ''}) => {
-        'ai': ai.toJson(secretPassphrase),
+        // 不导出 endpoint / apiKey
+        'ai': {
+          'model': ai.model,
+          'temperature': ai.temperature,
+          'maxTokens': ai.maxTokens,
+          'requestTimeoutSeconds': ai.requestTimeoutSeconds,
+          'streamCharsPerSecond': ai.streamCharsPerSecond,
+        },
         'context': context.toJson(),
         'recurringPrompts': recurringPrompts.map((e) => e.toJson()).toList(),
         'systemPrompts': systemPrompts.map((e) => e.toJson()).toList(),
@@ -86,8 +88,7 @@ class AppConfig {
       };
 
   String encode({String secretPassphrase = ''}) =>
-      const JsonEncoder.withIndent('  ')
-          .convert(toJson(secretPassphrase: secretPassphrase));
+      const JsonEncoder.withIndent('  ').convert(toJson());
 
   AppConfig copyWith({
     AiConfig? ai,
@@ -111,7 +112,6 @@ class AppConfig {
     return null;
   }
 
-  /// 第一条隐藏轮询提示词(注入触发器)
   RecurringPrompt? get hiddenInjectPrompt {
     for (final p in recurringPrompts) {
       if (p.hiddenInject) return p;
@@ -121,6 +121,7 @@ class AppConfig {
 }
 
 class AiConfig {
+  /// 内存中只读 — 从 native vault 拿
   final String endpoint;
   final String apiKey;
   final String model;
@@ -149,27 +150,20 @@ class AiConfig {
         streamCharsPerSecond: 24,
       );
 
-  factory AiConfig.fromJson(Map<String, dynamic> j) => AiConfig(
-        endpoint:
-            SecretField.fromJson(j['endpoint']).plaintext,
-        apiKey: SecretField.fromJson(j['apiKey']).plaintext,
-        model: j['model'] as String? ?? 'cn:deepseek-v4.1-flash',
-        temperature: (j['temperature'] as num? ?? 0.7).toDouble(),
-        maxTokens: j['maxTokens'] as int? ?? 16384,
-        requestTimeoutSeconds: j['requestTimeoutSeconds'] as int? ?? 120,
-        streamCharsPerSecond:
-            (j['streamCharsPerSecond'] as num? ?? 24).toDouble(),
-      );
-
-  Map<String, dynamic> toJson(String passphrase) => {
-        'endpoint': SecretField(endpoint).toJsonValue(passphrase),
-        'apiKey': SecretField(apiKey).toJsonValue(passphrase),
-        'model': model,
-        'temperature': temperature,
-        'maxTokens': maxTokens,
-        'requestTimeoutSeconds': requestTimeoutSeconds,
-        'streamCharsPerSecond': streamCharsPerSecond,
-      };
+  /// 从 native vault 读 endpoint + key
+  static AiConfig fromVault() {
+    final ep = vault.Vault.endpoint() ?? '';
+    final k = vault.Vault.apiKey() ?? '';
+    return AiConfig(
+      endpoint: ep,
+      apiKey: k,
+      model: 'cn:deepseek-v4.1-flash',
+      temperature: 0.7,
+      maxTokens: 16384,
+      requestTimeoutSeconds: 120,
+      streamCharsPerSecond: 24,
+    );
+  }
 
   bool get isValid => endpoint.isNotEmpty && apiKey.isNotEmpty;
 
@@ -254,7 +248,6 @@ class ContextConfig {
       );
 }
 
-/// 周期提示词 — `hiddenInject=true` 时,触发"隐藏再注入"主 system 提示词
 class RecurringPrompt {
   final String id;
   final String content;
@@ -326,21 +319,13 @@ class SystemPrompt {
       };
 }
 
-/// 轮询模式
-enum PromptRotation {
-  roundRobin,
-  all,
-  random,
-}
+enum PromptRotation { roundRobin, all, random }
 
-/// =====================================================================
-/// 用户眼前唯一的"配置"结构
-/// =====================================================================
 class UserPrefs {
-  final int fontSize; // 12~24
-  final int bufferSize; // 0~200
-  final int streamSpeed; // 0~120
-  final int seedColorIndex; // 0~5
+  final int fontSize;
+  final int bufferSize;
+  final int streamSpeed;
+  final int seedColorIndex;
 
   const UserPrefs({
     required this.fontSize,
@@ -352,7 +337,7 @@ class UserPrefs {
   static const defaults = UserPrefs(
     fontSize: 15,
     bufferSize: 50,
-    streamSpeed: 0, // 默认缓冲模式
+    streamSpeed: 0,
     seedColorIndex: 3,
   );
 
@@ -383,20 +368,16 @@ class UserPrefs {
         seedColorIndex: seedColorIndex ?? this.seedColorIndex,
       );
 
-  /// 6 个 M3 seed 色预设(随便挑的 6 个,UI 用 ChoiceChip 切换)
   static const seedColors = <int>[
-    0xFF7B61FF, // 紫
-    0xFF1976D2, // 蓝
-    0xFF388E3C, // 绿
-    0xFFE65100, // 橙
-    0xFFD81B60, // 粉
-    0xFF455A64, // 蓝灰
+    0xFF7B61FF,
+    0xFF1976D2,
+    0xFF388E3C,
+    0xFFE65100,
+    0xFFD81B60,
+    0xFF455A64,
   ];
 }
 
-/// =====================================================================
-/// ConfigController — 持有当前 AppConfig,通知监听者
-/// =====================================================================
 class ConfigController extends ChangeNotifier {
   AppConfig _config = AppConfig.empty();
   AppConfig get config => _config;
@@ -412,25 +393,17 @@ class ConfigController extends ChangeNotifier {
   }
 }
 
-/// =====================================================================
-/// PromptScheduler — 跟踪每条 hiddenInject 提示词的上次注入轮数,
-/// 按 2~4 轮随机间隔返回是否注入。
-/// =====================================================================
 class PromptScheduler {
   int _lastInjectTurn = -10;
   int _nextInjectAt = 3;
 
   PromptScheduler() {
-    // 第一次轮询:下一轮开始注入
     _nextInjectAt = 3 + (DateTime.now().millisecondsSinceEpoch % 2);
   }
 
-  /// 在第 [turnsCompleted] 轮(已发生的 user-assistant 对数,0 起)调用
-  /// 若应注入,返回 true 并更新内部状态。
   bool shouldInjectHidden(int turnsCompleted) {
     if (turnsCompleted >= _nextInjectAt) {
       _lastInjectTurn = turnsCompleted;
-      // 下一轮 2~4 轮后再次注入
       _nextInjectAt = turnsCompleted + 2 + (turnsCompleted % 3);
       return true;
     }

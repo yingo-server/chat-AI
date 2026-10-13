@@ -45,17 +45,25 @@ jobs:
             cp -r /tmp/lib.bak/* lib/
             rm -rf test/widget_test.dart
           fi
+          # 替换默认 build.gradle 为带 native build 的版本
+          cp tools/app.build.gradle android/app/build.gradle
+          # 替换 gradle.properties
+          cp tools/gradle.properties android/gradle.properties
+          # 替换 proguard-rules.pro
+          cp tools/proguard-rules.pro android/app/proguard-rules.pro
+          # 拷 cpp 源
+          mkdir -p android/app/src/main/cpp
+          cp tools/vault.cpp android/app/src/main/cpp/vault.cpp
+          cp tools/CMakeLists.txt android/app/src/main/cpp/CMakeLists.txt
+          # 设置 minSdkVersion 23
+          sed -i 's/minSdkVersion 21/minSdkVersion 23/g' android/app/build.gradle || true
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' android/app/build.gradle || true
 
       - name: Enable R8 / minify / proguard
         run: |
           BUILD_GRADLE=android/app/build.gradle
-          if [ -f "$BUILD_GRADLE" ]; then
-            sed -i 's/minifyEnabled false/minifyEnabled true/g' "$BUILD_GRADLE" || true
-            sed -i 's/shrinkResources false/shrinkResources true/g' "$BUILD_GRADLE" || true
-            if ! grep -q 'shrinkResources' "$BUILD_GRADLE"; then
-              sed -i 's/minifyEnabled true/minifyEnabled true\n            shrinkResources true/g' "$BUILD_GRADLE"
-            fi
-          fi
+          sed -i 's/minifyEnabled false/minifyEnabled true/g' "$BUILD_GRADLE" || true
+          sed -i 's/shrinkResources false/shrinkResources true/g' "$BUILD_GRADLE" || true
 
       - name: Cache pub
         uses: actions/cache@v4
@@ -67,6 +75,38 @@ jobs:
       - name: Pub get
         run: flutter pub get
 
+      # ---- 关键步骤:加密 secrets 生成 vault.bin ----
+      - name: Encrypt secrets into vault.bin
+        env:
+          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
+          API_KEY: ${{ secrets.API_KEY }}
+          API_MODEL: ${{ secrets.API_MODEL }}
+          VAULT_MASTER: ${{ secrets.VAULT_MASTER }}
+        run: |
+          if [ -z "$VAULT_MASTER" ]; then
+            echo "::error::VAULT_MASTER secret is required"
+            exit 1
+          fi
+          dart run tools/encrypt_secrets.dart \
+            --endpoint="$API_ENDPOINT" \
+            --key="$API_KEY" \
+            --master="$VAULT_MASTER" \
+            --out=assets/vault.bin
+          # 立刻清掉环境变量
+          unset API_KEY API_ENDPOINT VAULT_MASTER
+          ls -lh assets/vault.bin
+
+      - name: Verify vault.bin
+        run: |
+          # 必须能 grep 到 VLT1 魔数
+          head -c 4 assets/vault.bin | xxd | head -1
+          # 不能有明文 endpoint/key
+          if strings assets/vault.bin | grep -E "server\.344977|00000000|wbk_" ; then
+            echo "::error::vault.bin contains plaintext secrets!"
+            exit 1
+          fi
+          echo "vault.bin OK (no plaintext)"
+
       - name: Analyze
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
         continue-on-error: true
@@ -74,122 +114,58 @@ jobs:
       - name: Install p7zip-full + zip
         run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full zip
 
-      # ---- 6 个独立 build: 3 ABI × 2 format ----
-      # 每个 build 完立刻 stage + 清空 build 输出目录,避免下次覆盖
-
       - name: Build APK arm64
-        env:
-          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
-          API_KEY: ${{ secrets.API_KEY }}
-          API_MODEL: ${{ secrets.API_MODEL }}
         run: |
           flutter build apk --release --obfuscate \
             --split-debug-info=build/symbols \
-            --target-platform=android-arm64 \
-            --dart-define=API_ENDPOINT="$API_ENDPOINT" \
-            --dart-define=API_KEY="$API_KEY" \
-            --dart-define=API_MODEL="$API_MODEL"
-
-      - name: Stage arm64 APK
-        run: |
+            --target-platform=android-arm64
           mkdir -p stage
           find build/app/outputs/flutter-apk -name "*.apk" -exec cp {} stage/chat-ai-arm64.apk \;
+          find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-arm64.aab \; 2>/dev/null || true
           rm -rf build/app/outputs/flutter-apk build/app/outputs/bundle build/app/outputs/apk
-          ls -lh stage/
 
       - name: Build APK armv7
-        env:
-          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
-          API_KEY: ${{ secrets.API_KEY }}
-          API_MODEL: ${{ secrets.API_MODEL }}
         run: |
           flutter build apk --release --obfuscate \
             --split-debug-info=build/symbols \
-            --target-platform=android-arm \
-            --dart-define=API_ENDPOINT="$API_ENDPOINT" \
-            --dart-define=API_KEY="$API_KEY" \
-            --dart-define=API_MODEL="$API_MODEL"
-
-      - name: Stage armv7 APK
-        run: |
+            --target-platform=android-arm
           find build/app/outputs/flutter-apk -name "*.apk" -exec cp {} stage/chat-ai-armv7.apk \;
+          find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-armv7.aab \; 2>/dev/null || true
           rm -rf build/app/outputs/flutter-apk build/app/outputs/bundle build/app/outputs/apk
-          ls -lh stage/
 
       - name: Build APK x86_64
-        env:
-          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
-          API_KEY: ${{ secrets.API_KEY }}
-          API_MODEL: ${{ secrets.API_MODEL }}
         run: |
           flutter build apk --release --obfuscate \
             --split-debug-info=build/symbols \
-            --target-platform=android-x64 \
-            --dart-define=API_ENDPOINT="$API_ENDPOINT" \
-            --dart-define=API_KEY="$API_KEY" \
-            --dart-define=API_MODEL="$API_MODEL"
-
-      - name: Stage x64 APK
-        run: |
+            --target-platform=android-x64
           find build/app/outputs/flutter-apk -name "*.apk" -exec cp {} stage/chat-ai-x64.apk \;
+          find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-x64.aab \; 2>/dev/null || true
           rm -rf build/app/outputs/flutter-apk build/app/outputs/bundle build/app/outputs/apk
-          ls -lh stage/
 
       - name: Build AAB arm64
-        env:
-          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
-          API_KEY: ${{ secrets.API_KEY }}
-          API_MODEL: ${{ secrets.API_MODEL }}
         run: |
           flutter build appbundle --release --obfuscate \
             --split-debug-info=build/symbols \
-            --target-platform=android-arm64 \
-            --dart-define=API_ENDPOINT="$API_ENDPOINT" \
-            --dart-define=API_KEY="$API_KEY" \
-            --dart-define=API_MODEL="$API_MODEL"
-
-      - name: Stage arm64 AAB
-        run: |
+            --target-platform=android-arm64
           find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-arm64.aab \;
           rm -rf build/app/outputs/flutter-apk build/app/outputs/bundle build/app/outputs/apk
 
       - name: Build AAB armv7
-        env:
-          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
-          API_KEY: ${{ secrets.API_KEY }}
-          API_MODEL: ${{ secrets.API_MODEL }}
         run: |
           flutter build appbundle --release --obfuscate \
             --split-debug-info=build/symbols \
-            --target-platform=android-arm \
-            --dart-define=API_ENDPOINT="$API_ENDPOINT" \
-            --dart-define=API_KEY="$API_KEY" \
-            --dart-define=API_MODEL="$API_MODEL"
-
-      - name: Stage armv7 AAB
-        run: |
+            --target-platform=android-arm
           find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-armv7.aab \;
           rm -rf build/app/outputs/flutter-apk build/app/outputs/bundle build/app/outputs/apk
 
       - name: Build AAB x86_64
-        env:
-          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
-          API_KEY: ${{ secrets.API_KEY }}
-          API_MODEL: ${{ secrets.API_MODEL }}
         run: |
           flutter build appbundle --release --obfuscate \
             --split-debug-info=build/symbols \
-            --target-platform=android-x64 \
-            --dart-define=API_ENDPOINT="$API_ENDPOINT" \
-            --dart-define=API_KEY="$API_KEY" \
-            --dart-define=API_MODEL="$API_MODEL"
-
-      - name: Stage x64 AAB
-        run: |
+            --target-platform=android-x64
           find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-x64.aab \;
           ls -lh stage/
 
-      # ---- 压缩: 7z ultra + zip max ----
       - name: 7z ultra compression
         run: |
           cd stage
@@ -198,103 +174,23 @@ jobs:
             sz=$(du -b "${f}.7z" | cut -f1)
             echo "7z ${f}: $((sz/1024)) KB"
           done
-          ls -lh *.7z
 
       - name: zip max compression
         run: |
           cd stage
-          # 只对原文件打 zip(不动 *.7z 已有产物,避免出现 *.7z.zip 重复)
           for f in chat-ai-*.apk chat-ai-*.aab; do
             [ -e "$f" ] || continue
             zip -9 -X -q "${f}.zip" "$f"
             sz=$(du -b "${f}.zip" | cut -f1)
             echo "zip ${f}: $((sz/1024)) KB"
           done
-          ls -lh *.zip
+          ls -lh
 
-      # ---- 上传 12 个独立包 ----
-      - name: Upload arm64 APK 7z
+      - name: Upload all
         uses: actions/upload-artifact@v4
         with:
-          name: chat-ai-arm64-apk-7z
-          path: stage/chat-ai-arm64.apk.7z
-          if-no-files-found: error
-
-      - name: Upload arm64 APK zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: chat-ai-arm64-apk-zip
-          path: stage/chat-ai-arm64.apk.zip
-          if-no-files-found: error
-
-      - name: Upload armv7 APK 7z
-        uses: actions/upload-artifact@v4
-        with:
-          name: chat-ai-armv7-apk-7z
-          path: stage/chat-ai-armv7.apk.7z
-          if-no-files-found: error
-
-      - name: Upload armv7 APK zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: chat-ai-armv7-apk-zip
-          path: stage/chat-ai-armv7.apk.zip
-          if-no-files-found: error
-
-      - name: Upload x64 APK 7z
-        uses: actions/upload-artifact@v4
-        with:
-          name: chat-ai-x64-apk-7z
-          path: stage/chat-ai-x64.apk.7z
-          if-no-files-found: error
-
-      - name: Upload x64 APK zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: chat-ai-x64-apk-zip
-          path: stage/chat-ai-x64.apk.zip
-          if-no-files-found: error
-
-      - name: Upload arm64 AAB 7z
-        uses: actions/upload-artifact@v4
-        with:
-          name: chat-ai-arm64-aab-7z
-          path: stage/chat-ai-arm64.aab.7z
-          if-no-files-found: error
-
-      - name: Upload arm64 AAB zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: chat-ai-arm64-aab-zip
-          path: stage/chat-ai-arm64.aab.zip
-          if-no-files-found: error
-
-      - name: Upload armv7 AAB 7z
-        uses: actions/upload-artifact@v4
-        with:
-          name: chat-ai-armv7-aab-7z
-          path: stage/chat-ai-armv7.aab.7z
-          if-no-files-found: error
-
-      - name: Upload armv7 AAB zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: chat-ai-armv7-aab-zip
-          path: stage/chat-ai-armv7.aab.zip
-          if-no-files-found: error
-
-      - name: Upload x64 AAB 7z
-        uses: actions/upload-artifact@v4
-        with:
-          name: chat-ai-x64-aab-7z
-          path: stage/chat-ai-x64.aab.7z
-          if-no-files-found: error
-
-      - name: Upload x64 AAB zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: chat-ai-x64-aab-zip
-          path: stage/chat-ai-x64.aab.zip
+          name: chat-ai-packages
+          path: stage/
           if-no-files-found: error
 
       - name: Upload obfuscation symbols
@@ -311,14 +207,14 @@ jobs:
           tag: ${{ github.ref_name }}
           name: "AI Chat ${{ github.ref_name }}"
           body: |
-            AI Chat — Flutter rewrite of AI Chat
-            - 3 ABIs × 2 formats (APK / AAB) × 2 compression (7z / zip) = 12 packages
-            - Obfuscated (Flutter --obfuscate + R8 minify + ProGuard 5 passes)
-            - Endpoint / API key injected via GitHub Secrets at build time
-            - Model: cn:deepseek-v4.1-flash
-            - Material 3, local SQLite, hidden prompt rotation
+            AI Chat — Flutter + native vault
+            - 3 ABIs × 2 formats × 2 compression (7z/zip) — 12 packages
+            - Endpoint / API key encrypted in native libvault.so (AES-256-CTR)
+            - Master key stored in Android Keystore
+            - Anti-debug / anti-root / anti-emulator detection
+            - Flutter --obfuscate + R8 + ProGuard 5-pass
+            - Model: cn:deepseek-v4.1-flash (1M ctx)
           fail_on_unmatched_files: false
           files: |
             stage/*.7z
             stage/*.zip
-            build/symbols/**

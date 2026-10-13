@@ -1,8 +1,6 @@
 {
-  "_doc": "占位配置 — 真实端点 / 密钥不在仓库内,而是通过 --dart-define=API_ENDPOINT=... --dart-define=API_KEY=... 在 build 时注入。运行时通过 SecretBox 加密后持久化到文档目录 config.json。",
+  "_doc": "用户偏好 + 提示词;endpoint / apiKey 由 native vault 保护(assets/vault.bin + Android Keystore)。",
   "ai": {
-    "endpoint": "",
-    "apiKey": "",
     "model": "cn:deepseek-v4.1-flash",
     "temperature": 0.7,
     "maxTokens": 16384,
