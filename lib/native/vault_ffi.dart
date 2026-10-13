@@ -15,8 +15,8 @@ typedef _VaultSetMasterNative = Int32 Function(
 typedef _VaultSetMasterDart = int Function(Pointer<Uint8> key, int len);
 
 typedef _VaultGetStrNative = Int32 Function(
-    Pointer<Utf8> out, Int32 outLen);
-typedef _VaultGetStrDart = int Function(Pointer<Utf8> out, int outLen);
+    Pointer<Uint8> out, Int32 outLen);
+typedef _VaultGetStrDart = int Function(Pointer<Uint8> out, int outLen);
 
 typedef _VaultWipeNative = Void Function();
 typedef _VaultWipeDart = void Function();
@@ -70,12 +70,17 @@ class VaultFfi {
   static String? getEndpoint() => _readStr(_get);
   static String? getApiKey() => _readStr(_getKey);
 
-  static String? _readStr(int Function(Pointer<Utf8>, int) f) {
-    final buf = malloc<Utf8>(1024);
+  static String? _readStr(int Function(Pointer<Uint8>, int) f) {
+    final buf = malloc<Uint8>(1024);
     try {
       final n = f(buf, 1024);
       if (n <= 0) return null;
-      return buf.toDartString(length: n);
+      // C 字符串以 \0 结尾
+      var len = 0;
+      while (len < n && buf[len] != 0) len++;
+      final bytes = Uint8List(len);
+      for (var i = 0; i < len; i++) bytes[i] = buf[i];
+      return String.fromCharCodes(bytes);
     } finally {
       malloc.free(buf);
     }
