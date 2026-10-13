@@ -1,4 +1,4 @@
-name: Build Android APK & AAB
+name: Build & Package 6-split Android binaries
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -35,7 +35,7 @@ jobs:
       - name: Verify Flutter
         run: flutter --version
 
-      # 若仓库只有 Dart 代码,没有 android/ 平台壳,补一个最小壳
+      # 脚手架(仓库内无 android/)
       - name: Ensure Android platform
         run: |
           if [ ! -d android ]; then
@@ -48,14 +48,13 @@ jobs:
             rm -rf test/widget_test.dart
           fi
 
+      # R8 + minify + shrinkResources
       - name: Enable R8 / minify / proguard
         run: |
           BUILD_GRADLE=android/app/build.gradle
           if [ -f "$BUILD_GRADLE" ]; then
-            # 启用 minifyEnabled + shrinkResources
             sed -i 's/minifyEnabled false/minifyEnabled true/g' "$BUILD_GRADLE" || true
             sed -i 's/shrinkResources false/shrinkResources true/g' "$BUILD_GRADLE" || true
-            # 若没有 shrinkResources 字段,追加
             if ! grep -q 'shrinkResources' "$BUILD_GRADLE"; then
               sed -i 's/minifyEnabled true/minifyEnabled true\n            shrinkResources true/g' "$BUILD_GRADLE"
             fi
@@ -75,7 +74,8 @@ jobs:
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
         continue-on-error: true
 
-      - name: Build APK (release, obfuscated, split per ABI)
+      # ---- 1) 单 ABI APK ×3 ----
+      - name: Build APK arm64
         env:
           API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
           API_KEY: ${{ secrets.API_KEY }}
@@ -83,12 +83,39 @@ jobs:
         run: |
           flutter build apk --release --obfuscate \
             --split-debug-info=build/symbols \
-            --split-per-abi \
+            --target-platform=android-arm64 \
             --dart-define=API_ENDPOINT="$API_ENDPOINT" \
             --dart-define=API_KEY="$API_KEY" \
             --dart-define=API_MODEL="$API_MODEL"
 
-      - name: Build App Bundle (release, obfuscated)
+      - name: Build APK armv7
+        env:
+          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
+          API_KEY: ${{ secrets.API_KEY }}
+          API_MODEL: ${{ secrets.API_MODEL }}
+        run: |
+          flutter build apk --release --obfuscate \
+            --split-debug-info=build/symbols \
+            --target-platform=android-arm \
+            --dart-define=API_ENDPOINT="$API_ENDPOINT" \
+            --dart-define=API_KEY="$API_KEY" \
+            --dart-define=API_MODEL="$API_MODEL"
+
+      - name: Build APK x86_64
+        env:
+          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
+          API_KEY: ${{ secrets.API_KEY }}
+          API_MODEL: ${{ secrets.API_MODEL }}
+        run: |
+          flutter build apk --release --obfuscate \
+            --split-debug-info=build/symbols \
+            --target-platform=android-x64 \
+            --dart-define=API_ENDPOINT="$API_ENDPOINT" \
+            --dart-define=API_KEY="$API_KEY" \
+            --dart-define=API_MODEL="$API_MODEL"
+
+      # ---- 2) 单 ABI AAB ×3 (per-ABI AAB 需要 --target-platform) ----
+      - name: Build AAB arm64
         env:
           API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
           API_KEY: ${{ secrets.API_KEY }}
@@ -96,24 +123,142 @@ jobs:
         run: |
           flutter build appbundle --release --obfuscate \
             --split-debug-info=build/symbols \
+            --target-platform=android-arm64 \
             --dart-define=API_ENDPOINT="$API_ENDPOINT" \
             --dart-define=API_KEY="$API_KEY" \
             --dart-define=API_MODEL="$API_MODEL"
 
-      - name: Upload APK artifacts
+      - name: Build AAB armv7
+        env:
+          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
+          API_KEY: ${{ secrets.API_KEY }}
+          API_MODEL: ${{ secrets.API_MODEL }}
+        run: |
+          flutter build appbundle --release --obfuscate \
+            --split-debug-info=build/symbols \
+            --target-platform=android-arm \
+            --dart-define=API_ENDPOINT="$API_ENDPOINT" \
+            --dart-define=API_KEY="$API_KEY" \
+            --dart-define=API_MODEL="$API_MODEL"
+
+      - name: Build AAB x86_64
+        env:
+          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
+          API_KEY: ${{ secrets.API_KEY }}
+          API_MODEL: ${{ secrets.API_MODEL }}
+        run: |
+          flutter build appbundle --release --obfuscate \
+            --split-debug-info=build/symbols \
+            --target-platform=android-x64 \
+            --dart-define=API_ENDPOINT="$API_ENDPOINT" \
+            --dart-define=API_KEY="$API_KEY" \
+            --dart-define=API_MODEL="$API_MODEL"
+
+      # ---- 3) 安装 7z + zip,收集产物 ----
+      - name: Install p7zip-full + zip
+        run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full zip
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p stage
+          # 找文件
+          for abi in arm64 armv7 x64; do
+            case $abi in
+              arm64)  tag="arm64-v8a"; pat="arm64-v8a";;
+              armv7)  tag="armeabi-v7a"; pat="armeabi-v7a";;
+              x64)    tag="x86_64";    pat="x86_64";;
+            esac
+            for kind in apk aab; do
+              ext=$( [ "$kind" = "apk" ] && echo apk || echo aab )
+              src=$( find build/app/outputs -type f -name "*${pat}*.${ext}" | head -1 )
+              if [ -z "$src" ]; then
+                echo "WARN: not found *${pat}*.${ext}"
+                ls -la build/app/outputs 2>/dev/null || true
+                find build/app/outputs -type f 2>/dev/null | head -20
+                continue
+              fi
+              cp "$src" "stage/chat-ai-${abi}.${ext}"
+              echo "staged $(basename $src) -> stage/chat-ai-${abi}.${ext} ($(du -h $src | cut -f1))"
+            done
+          done
+          ls -lh stage/
+
+      # ---- 4) 极限压缩: 7z (-mx=9) + zip (-9) ----
+      - name: 7z ultra compression
+        run: |
+          cd stage
+          for f in chat-ai-*; do
+            7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=64m -ms=on "${f}.7z" "$f" >/dev/null
+            sz=$(du -b "${f}.7z" | cut -f1)
+            echo "7z ${f}: $((sz/1024)) KB"
+          done
+          ls -lh *.7z
+
+      - name: zip max compression
+        run: |
+          cd stage
+          for f in chat-ai-*; do
+            zip -9 -X -q "${f}.zip" "$f"
+            sz=$(du -b "${f}.zip" | cut -f1)
+            echo "zip ${f}: $((sz/1024)) KB"
+          done
+          ls -lh *.zip
+
+      # ---- 5) 上传所有包(每个独立 artifact)----
+      - name: Upload arm64 APK 7z
         uses: actions/upload-artifact@v4
         with:
-          name: apk-release-obfuscated
-          path: |
-            build/app/outputs/flutter-apk/*.apk
-            build/app/outputs/apk/release/*.apk
+          name: chat-ai-arm64-apk-7z
+          path: stage/chat-ai-arm64.apk.7z
           if-no-files-found: warn
 
-      - name: Upload AAB artifact
+      - name: Upload arm64 APK zip
         uses: actions/upload-artifact@v4
         with:
-          name: appbundle-release-obfuscated
-          path: build/app/outputs/bundle/release/*.aab
+          name: chat-ai-arm64-apk-zip
+          path: stage/chat-ai-arm64.apk.zip
+          if-no-files-found: warn
+
+      - name: Upload armv7 APK 7z
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-ai-armv7-apk-7z
+          path: stage/chat-ai-armv7.apk.7z
+          if-no-files-found: warn
+
+      - name: Upload armv7 APK zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-ai-armv7-apk-zip
+          path: stage/chat-ai-armv7.apk.zip
+          if-no-files-found: warn
+
+      - name: Upload x64 APK 7z
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-ai-x64-apk-7z
+          path: stage/chat-ai-x64.apk.7z
+          if-no-files-found: warn
+
+      - name: Upload x64 APK zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-ai-x64-apk-zip
+          path: stage/chat-ai-x64.apk.zip
+          if-no-files-found: warn
+
+      - name: Upload AAB 7z (all 3 ABIs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-ai-aab-7z
+          path: stage/*.aab.7z
+          if-no-files-found: warn
+
+      - name: Upload AAB zip (all 3 ABIs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-ai-aab-zip
+          path: stage/*.aab.zip
           if-no-files-found: warn
 
       - name: Upload obfuscation symbols
@@ -128,7 +273,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            build/app/outputs/flutter-apk/*.apk
-            build/app/outputs/apk/release/*.apk
-            build/app/outputs/bundle/release/*.aab
+            stage/*.7z
+            stage/*.zip
           fail_on_unmatched_files: false
