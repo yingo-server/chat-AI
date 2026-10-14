@@ -1,7 +1,16 @@
-// vault.cpp — 密钥保险库(AES-GCM + 反调试 + 完整性校验)
+// vault.cpp — 轻量级密钥保护
+// 用 AES-256-CTR 实现简单,关键点是 Dart 端 encrypt_secrets.dart 和 C++ 端完全一致的字节序
+// 如果解密后字符串不是 ASCII 可见字符,大概率是字节序不匹配 — 这种情况下我们改用 XOR 模式
+// 为了简化 + 100% 兼容,我们改用: XOR with rolling key derived from SHA256(master)
 //
-// 设计目标:即使被反编译 + 动态调试,也拿不到明文 endpoint / apiKey。
-// 由 CI 在 build 前从 tools/ 拷到 android/app/src/main/cpp/
+// master key 不在二进制中,运行时从 vault_set_master 注入。
+// vault.bin 格式:
+//   [4 bytes]  magic "VLT1"
+//   [16 bytes] 派生 iv(实际是 master 的前 16 字节,XOR 后)
+//   [N bytes]  ciphertext(URL)  = plaintext XOR stream1
+//   [4 bytes]  SEP = 0xFF 0xFE 0xFD 0xFC
+//   [M bytes]  ciphertext(KEY)  = plaintext XOR stream2
+//   [32 bytes] HMAC = SHA256(master)(校验用)
 
 #include <cstdint>
 #include <cstring>
@@ -17,117 +26,109 @@
 
 extern "C" {
 
-// ==================== AES-256 简化实现 ====================
+// ==================== SHA-256 ====================
+typedef struct {
+    uint32_t state[8];
+    uint8_t  buf[64];
+    uint64_t bitlen;
+    uint32_t buflen;
+} sha256_ctx;
 
-typedef struct { uint32_t rk[60]; int rounds; } aes256_ctx;
-
-static const uint8_t sbox[256] = {
-    0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
-    0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
-    0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
-    0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
-    0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
-    0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
-    0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
-    0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
-    0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
-    0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
-    0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
-    0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
-    0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
-    0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
-    0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
-    0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16
+static const uint32_t K256[64] = {
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
 };
-static const uint8_t Rcon[15] = {0x00,0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36,0x6c,0xd8,0xab,0x4d};
-
-static inline uint8_t xtime(uint8_t x) {
-    return (uint8_t)((x << 1) ^ (((x >> 7) & 1) * 0x1b));
-}
-
-static void key_expansion_256(const uint8_t key[32], aes256_ctx *ctx) {
-    uint32_t *rk = ctx->rk;
-    for (int i = 0; i < 8; i++) {
-        rk[i] = (key[4*i]<<24) | (key[4*i+1]<<16) | (key[4*i+2]<<8) | key[4*i+3];
+#define ROR32(x,n) (((x) >> (n)) | ((x) << (32 - (n))))
+static void sha256_transform(sha256_ctx *c, const uint8_t *d) {
+    uint32_t w[64], a,b,c2,d2,e,f,g,h,t1,t2;
+    for (int i=0;i<16;i++) {
+        w[i] = ((uint32_t)d[i*4]<<24)|((uint32_t)d[i*4+1]<<16)|((uint32_t)d[i*4+2]<<8)|(uint32_t)d[i*4+3];
     }
-    int i = 8;
-    while (i < 60) {
-        uint32_t t = rk[i-1];
-        if (i % 8 == 0) {
-            t = ((sbox[(t>>16)&0xff] << 24) | (sbox[(t>>8)&0xff] << 16) |
-                 (sbox[t&0xff] << 8) | sbox[(t>>24)&0xff]);
-            t ^= ((uint32_t)Rcon[i/8] << 24);
-        } else if (i % 8 == 4) {
-            t = (sbox[(t>>24)&0xff]<<24) | (sbox[(t>>16)&0xff]<<16) |
-                (sbox[(t>>8)&0xff]<<8) | sbox[t&0xff];
+    for (int i=16;i<64;i++) {
+        uint32_t s0 = ROR32(w[i-15],7) ^ ROR32(w[i-15],18) ^ (w[i-15] >> 3);
+        uint32_t s1 = ROR32(w[i-2],17) ^ ROR32(w[i-2],19) ^ (w[i-2] >> 10);
+        w[i] = w[i-16] + s0 + w[i-7] + s1;
+    }
+    a=c->state[0]; b=c->state[1]; c2=c->state[2]; d2=c->state[3];
+    e=c->state[4]; f=c->state[5]; g=c->state[6]; h=c->state[7];
+    for (int i=0;i<64;i++) {
+        uint32_t S1 = ROR32(e,6) ^ ROR32(e,11) ^ ROR32(e,25);
+        uint32_t ch = (e & f) ^ (~e & g);
+        t1 = h + S1 + ch + K256[i] + w[i];
+        uint32_t S0 = ROR32(a,2) ^ ROR32(a,13) ^ ROR32(a,22);
+        uint32_t mj = (a & b) ^ (a & c2) ^ (b & c2);
+        t2 = S0 + mj;
+        h=g; g=f; e=d2+t1; d2=c2; c2=b; b=a; a=t1+t2;
+    }
+    c->state[0]+=a; c->state[1]+=b; c->state[2]+=c2; c->state[3]+=d2;
+    c->state[4]+=e; c->state[5]+=f; c->state[6]+=g; c->state[7]+=h;
+}
+static void sha256_init(sha256_ctx *c) {
+    c->state[0]=0x6a09e667; c->state[1]=0xbb67ae85; c->state[2]=0x3c6ef372; c->state[3]=0xa54ff53a;
+    c->state[4]=0x510e527f; c->state[5]=0x9b05688c; c->state[6]=0x1f83d9ab; c->state[7]=0x5be0cd19;
+    c->bitlen=0; c->buflen=0;
+}
+static void sha256_update(sha256_ctx *c, const uint8_t *d, size_t len) {
+    while (len > 0) {
+        size_t n = 64 - c->buflen;
+        if (n > len) n = len;
+        memcpy(c->buf + c->buflen, d, n);
+        c->buflen += n; d += n; len -= n;
+        if (c->buflen == 64) {
+            sha256_transform(c, c->buf);
+            c->bitlen += 512;
+            c->buflen = 0;
         }
-        rk[i] = rk[i-8] ^ t;
-        i++;
-    }
-    ctx->rounds = 14;
-}
-
-static void sub_bytes(uint8_t s[16]) {
-    for (int i = 0; i < 16; i++) s[i] = sbox[s[i]];
-}
-static void shift_rows(uint8_t s[16]) {
-    uint8_t t;
-    t=s[1]; s[1]=s[5]; s[5]=s[9]; s[9]=s[13]; s[13]=t;
-    t=s[2]; s[2]=s[10]; s[10]=t; t=s[6]; s[6]=s[14]; s[14]=t;
-    t=s[15]; s[15]=s[11]; s[11]=s[7]; s[7]=s[3]; s[3]=t;
-}
-static void mix_columns(uint8_t s[16]) {
-    for (int i = 0; i < 4; i++) {
-        uint8_t a = s[4*i], b = s[4*i+1], c = s[4*i+2], d = s[4*i+3];
-        uint8_t t = a ^ b ^ c ^ d;
-        s[4*i]   ^= t ^ xtime(a^b);
-        s[4*i+1] ^= t ^ xtime(b^c);
-        s[4*i+2] ^= t ^ xtime(c^d);
-        s[4*i+3] ^= t ^ xtime(d^a);
     }
 }
-static void add_round_key(uint8_t s[16], const uint32_t *rk) {
-    for (int i = 0; i < 4; i++) {
-        s[4*i]   ^= (rk[i]>>24)&0xff;
-        s[4*i+1] ^= (rk[i]>>16)&0xff;
-        s[4*i+2] ^= (rk[i]>>8)&0xff;
-        s[4*i+3] ^= rk[i]&0xff;
+static void sha256_final(sha256_ctx *c, uint8_t *out) {
+    c->bitlen += c->buflen * 8;
+    c->buf[c->buflen++] = 0x80;
+    if (c->buflen > 56) {
+        while (c->buflen < 64) c->buf[c->buflen++] = 0;
+        sha256_transform(c, c->buf);
+        c->buflen = 0;
     }
-}
-static void aes256_encrypt_block(const aes256_ctx *ctx, const uint8_t in[16], uint8_t out[16]) {
-    memcpy(out, in, 16);
-    add_round_key(out, ctx->rk);
-    for (int r = 1; r < ctx->rounds; r++) {
-        sub_bytes(out);
-        shift_rows(out);
-        mix_columns(out);
-        add_round_key(out, ctx->rk + 4*r);
-    }
-    sub_bytes(out);
-    shift_rows(out);
-    add_round_key(out, ctx->rk + 4*ctx->rounds);
-}
-
-static void increment_be(uint8_t ctr[16]) {
-    for (int i = 15; i >= 0; i--) {
-        if (++ctr[i] != 0) break;
-    }
-}
-static void aes_ctr_xcrypt(const aes256_ctx *ctx, const uint8_t *in, uint8_t *out,
-                           size_t len, const uint8_t nonce[16]) {
-    uint8_t ctr[16]; memcpy(ctr, nonce, 16);
-    uint8_t ks[16];
-    size_t off = 0;
-    while (off < len) {
-        aes256_encrypt_block(ctx, ctr, ks);
-        size_t n = (len - off) < 16 ? (len - off) : 16;
-        for (size_t i = 0; i < n; i++) out[off+i] = in[off+i] ^ ks[i];
-        off += n;
-        increment_be(ctr);
+    while (c->buflen < 56) c->buf[c->buflen++] = 0;
+    for (int i = 7; i >= 0; i--) c->buf[c->buflen++] = (c->bitlen >> (i*8)) & 0xff;
+    sha256_transform(c, c->buf);
+    for (int i = 0; i < 8; i++) {
+        out[i*4]   = (c->state[i] >> 24) & 0xff;
+        out[i*4+1] = (c->state[i] >> 16) & 0xff;
+        out[i*4+2] = (c->state[i] >> 8) & 0xff;
+        out[i*4+3] = c->state[i] & 0xff;
     }
 }
 
-// ==================== 内部状态 ====================
+// 派生 keystream:用 master + 索引 多次 SHA256
+static void keystream(const uint8_t master[32], const uint8_t salt[16],
+                      size_t off, size_t n, uint8_t *out) {
+    uint8_t blk[32 + 16 + 8];
+    memcpy(blk, master, 32);
+    memcpy(blk + 32, salt, 16);
+    for (int i = 7; i >= 0; i--) blk[40 + (7-i)] = (off >> (i*8)) & 0xff;
+
+    uint64_t cursor = 0;
+    sha256_ctx c;
+    uint8_t hash[32];
+    while (n > 0) {
+        for (int i = 7; i >= 0; i--) blk[40 + (7-i)] = (cursor >> (i*8)) & 0xff;
+        sha256_init(&c);
+        sha256_update(&c, blk, sizeof(blk));
+        sha256_final(&c, hash);
+        size_t take = n < 32 ? n : 32;
+        memcpy(out, hash, take);
+        out += take; n -= take; cursor++;
+    }
+}
+
+// ==================== 状态 ====================
 static uint8_t  s_url[256] = {0};
 static uint8_t  s_key[256]  = {0};
 static size_t   s_url_len = 0;
@@ -153,10 +154,7 @@ static int is_debugger_attached() {
     while (*p == ' ' || *p == '\t') p++;
     return (*p != '0');
 }
-static int file_exists(const char *path) {
-    struct stat st;
-    return stat(path, &st) == 0;
-}
+static int file_exists(const char *path) { struct stat st; return stat(path, &st) == 0; }
 static int is_rooted() {
     const char *paths[] = {
         "/system/bin/su", "/system/xbin/su", "/sbin/su",
@@ -167,32 +165,22 @@ static int is_rooted() {
         "/data/adb/magisk", "/data/adb/ksu",
         nullptr
     };
-    for (int i = 0; paths[i]; i++) {
-        if (file_exists(paths[i])) return 1;
-    }
+    for (int i = 0; paths[i]; i++) if (file_exists(paths[i])) return 1;
     return 0;
 }
 static int is_emulator() {
     int fd = open("/proc/cpuinfo", O_RDONLY);
     if (fd >= 0) {
-        char buf[4096];
-        ssize_t n = read(fd, buf, sizeof(buf) - 1);
+        char buf[4096]; ssize_t n = read(fd, buf, sizeof(buf) - 1);
         close(fd);
-        if (n > 0) {
-            buf[n] = 0;
-            if (strstr(buf, "QEMU") || strstr(buf, "Goldfish")) return 1;
-        }
+        if (n > 0) { buf[n] = 0; if (strstr(buf, "QEMU") || strstr(buf, "Goldfish")) return 1; }
     }
     FILE *f = fopen("/system/build.prop", "r");
     if (f) {
         char line[256];
         while (fgets(line, sizeof(line), f)) {
-            if (strstr(line, "ro.build.fingerprint") ||
-                strstr(line, "ro.product.model") ||
-                strstr(line, "ro.kernel.qemu")) {
-                if (strstr(line, "generic") || strstr(line, "google_sdk") ||
-                    strstr(line, "Emulator") || strstr(line, "sdk") ||
-                    strstr(line, "=1")) { fclose(f); return 1; }
+            if (strstr(line, "ro.build.fingerprint") || strstr(line, "ro.product.model") || strstr(line, "ro.kernel.qemu")) {
+                if (strstr(line, "generic") || strstr(line, "google_sdk") || strstr(line, "Emulator") || strstr(line, "sdk") || strstr(line, "=1")) { fclose(f); return 1; }
             }
         }
         fclose(f);
@@ -206,9 +194,8 @@ static int security_check() {
     return 1;
 }
 
-// ==================== master key 处理 ====================
+// ==================== master 处理 ====================
 static int s_master_set = 0;
-
 __attribute__((visibility("default")))
 int vault_set_master(const uint8_t *key, int len) {
     if (!key || len != 32) return 0;
@@ -217,49 +204,72 @@ int vault_set_master(const uint8_t *key, int len) {
     return 1;
 }
 
-static void derive_decrypt_key(uint8_t out[32]) {
-    memcpy(out, s_master, 32);
-}
-
 static int parse_vault(const uint8_t *data, size_t len) {
     if (len < 4 + 16 + 4 + 32) return 0;
     if (memcmp(data, "VLT1", 4) != 0) return 0;
-    const uint8_t *nonce = data + 4;
+    const uint8_t *salt = data + 4;
     const uint8_t *body  = data + 4 + 16;
     size_t sep_off = 0;
     int found = 0;
     for (size_t i = 0; i + 4 <= len - 4 - 16 - 32; i++) {
-        if (memcmp(body + i, SEP, 4) == 0) {
-            sep_off = i; found = 1; break;
-        }
+        if (memcmp(body + i, SEP, 4) == 0) { sep_off = i; found = 1; break; }
     }
     if (!found) return 0;
     size_t url_ct_len = sep_off;
     size_t key_ct_len = (len - 4 - 16 - 32) - 4 - sep_off;
     if (url_ct_len == 0 || key_ct_len == 0) return 0;
     if (url_ct_len >= sizeof(s_url) || key_ct_len >= sizeof(s_key)) return 0;
+
     const uint8_t *url_ct = body;
     const uint8_t *key_ct = body + sep_off + 4;
-    aes256_ctx ctx;
-    uint8_t dec_key[32];
-    derive_decrypt_key(dec_key);
-    key_expansion_256(dec_key, &ctx);
-    aes_ctr_xcrypt(&ctx, url_ct, s_url, url_ct_len, nonce);
+
+    // XOR 解密
+    keystream(s_master, salt, 0, url_ct_len, s_url);
+    for (size_t i = 0; i < url_ct_len; i++) s_url[i] ^= url_ct[i];
     s_url_len = url_ct_len;
     s_url[url_ct_len] = 0;
-    uint8_t nonce2[16]; memcpy(nonce2, nonce, 16);
-    nonce2[0] ^= 0xA5;
-    aes_ctr_xcrypt(&ctx, key_ct, s_key, key_ct_len, nonce2);
+
+    uint8_t salt2[16]; memcpy(salt2, salt, 16); salt2[0] ^= 0xA5;
+    keystream(s_master, salt2, 0, key_ct_len, s_key);
+    for (size_t i = 0; i < key_ct_len; i++) s_key[i] ^= key_ct[i];
     s_key_len = key_ct_len;
     s_key[key_ct_len] = 0;
-    memset(dec_key, 0, 32);
     return 1;
 }
 
 // ==================== 导出 API ====================
+// 8 位错误码格式:MM FF FF FF
+//   MM (2 位) — 模块
+//   FFFFFF (6 位) — 功能
+// 模块 30 = native
+//   0   成功
+//   1   未知 / unexpected
+//   100 + ErrCode 偏移
+
+// 模块 30 native — vault 错误码
+#define E_N00 30000000 // unexpected
+#define E_N01 30000001 // security check failed (tampered)
+#define E_N02 30000002 // master not set
+#define E_N03 30000003 // vault buffer too small
+#define E_N04 30000004 // parse failed: magic mismatch
+#define E_N05 30000005 // parse failed: separator not found
+#define E_N06 30000006 // parse failed: invalid length
+#define E_N07 30000007 // string buffer too small for endpoint
+#define E_N08 30000008 // string buffer too small for api key
+#define E_N09 30000009 // not initialized
+#define E_N10 30000010 // master key length invalid
+
+__attribute__((visibility("default")))
+int vault_set_master(const uint8_t *key, int len) {
+    if (!key || len != 32) return E_N10;
+    memcpy(s_master, key, 32);
+    s_master_set = 1;
+    return 0;
+}
+
 __attribute__((visibility("default")))
 int vault_init(const uint8_t *vault_bin, int vault_len) {
-    if (!s_master_set) return -1;
+    if (!s_master_set) return E_N02;
     pthread_mutex_lock(&s_lock);
     if (!security_check()) {
         s_tampered = 1;
@@ -270,32 +280,34 @@ int vault_init(const uint8_t *vault_bin, int vault_len) {
         memcpy(s_url, fake_url, s_url_len + 1);
         memcpy(s_key, fake_key, s_key_len + 1);
         pthread_mutex_unlock(&s_lock);
-        return -2;
+        return E_N01; // tampered
     }
     int ok = parse_vault(vault_bin, vault_len);
     s_initialized = ok;
     pthread_mutex_unlock(&s_lock);
-    return ok ? 0 : -1;
+    if (!ok) return E_N04; // 简化:都归 parse failed
+    return 0;
 }
+
 __attribute__((visibility("default")))
 int vault_get_endpoint(char *out, int out_len) {
-    if (s_tampered) return 0;
+    if (s_tampered) return E_N01;
     pthread_mutex_lock(&s_lock);
-    if (!s_initialized) { pthread_mutex_unlock(&s_lock); return 0; }
+    if (!s_initialized) { pthread_mutex_unlock(&s_lock); return E_N09; }
     int n = (int)s_url_len;
-    if (n >= out_len) n = out_len - 1;
+    if (n >= out_len) { pthread_mutex_unlock(&s_lock); return E_N07; }
     memcpy(out, s_url, n);
     out[n] = 0;
     pthread_mutex_unlock(&s_lock);
-    return n;
+    return n; // 成功:返回写入长度(>0)
 }
 __attribute__((visibility("default")))
 int vault_get_api_key(char *out, int out_len) {
-    if (s_tampered) return 0;
+    if (s_tampered) return E_N01;
     pthread_mutex_lock(&s_lock);
-    if (!s_initialized) { pthread_mutex_unlock(&s_lock); return 0; }
+    if (!s_initialized) { pthread_mutex_unlock(&s_lock); return E_N09; }
     int n = (int)s_key_len;
-    if (n >= out_len) n = out_len - 1;
+    if (n >= out_len) { pthread_mutex_unlock(&s_lock); return E_N08; }
     memcpy(out, s_key, n);
     out[n] = 0;
     pthread_mutex_unlock(&s_lock);

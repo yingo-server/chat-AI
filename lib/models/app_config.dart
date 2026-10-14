@@ -47,8 +47,13 @@ class AppConfig {
 
   /// 从 native vault 构造(端点/key 来自加密存储)
   factory AppConfig.fromVault({UserPrefs? prefs}) {
+    final (cfg, ec) = AiConfig.fromVaultWithEc();
+    if (cfg == null) {
+      // fallback:空 config
+      return AppConfig.empty();
+    }
     return AppConfig(
-      ai: AiConfig.fromVault(),
+      ai: cfg,
       context: ContextConfig.empty(),
       recurringPrompts: const [],
       systemPrompts: [SystemPrompt.defaultPrompt()],
@@ -160,19 +165,25 @@ class AiConfig {
       );
 
   /// 从 native vault 读 endpoint + key
-  static AiConfig fromVault() {
-    final ep = vault.Vault.endpoint() ?? '';
-    final k = vault.Vault.apiKey() ?? '';
-    return AiConfig(
-      endpoint: ep,
-      apiKey: k,
-      model: 'cn:deepseek-v4-flash',
-      temperature: 0.7,
-      maxTokens: 16384,
-      requestTimeoutSeconds: 120,
-      streamCharsPerSecond: 24,
-      firstTurnReasoning: 'low',
-      subsequentReasoning: 'none',
+  /// [outEc] 错误码(0=成功,非 0 见 Ec.* / native E_N0x)
+  static (AiConfig?, int) fromVaultWithEc() {
+    final (ep, epEc) = vault.Vault.endpoint();
+    final (k, kEc) = vault.Vault.apiKey();
+    if (epEc != 0) return (null, epEc);
+    if (kEc != 0) return (null, kEc);
+    return (
+      AiConfig(
+        endpoint: ep!,
+        apiKey: k!,
+        model: 'cn:deepseek-v4-flash',
+        temperature: 0.7,
+        maxTokens: 16384,
+        requestTimeoutSeconds: 120,
+        streamCharsPerSecond: 24,
+        firstTurnReasoning: 'low',
+        subsequentReasoning: 'none',
+      ),
+      0
     );
   }
 

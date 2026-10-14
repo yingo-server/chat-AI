@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  莫奈鸢尾花图标 - 灰白镂空风
+  适配 Material 3 / Android 12+ adaptive icon
+  - 前景:镂空鸢尾剪影(白色)
+  - 背景:深紫灰渐变(莫奈色系)
+  - 4 角菱形装饰点
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+  <!-- 背景:深紫灰渐变(莫奈鸢尾色调) -->
+  <path android:pathData="M0,0h108v108h-108z">
+    <aapt:attr name="android:fillColor" xmlns:aapt="http://schemas.android.com/aapt">
+      <gradient
+          android:type="linear"
+          android:startX="0" android:startY="0"
+          android:endX="108" android:endY="108"
+          android:startColor="#3D3450"
+          android:endColor="#1F1B2E"/>
+    </aapt:attr>
+  </path>
+
+  <!-- 4 角菱形装饰点 -->
+  <path android:fillColor="#9A92AD"
+        android:pathData="M14,14 l3,-3 l3,3 l-3,3 z"/>
+  <path android:fillColor="#9A92AD"
+        android:pathData="M88,14 l3,-3 l3,3 l-3,3 z"/>
+  <path android:fillColor="#9A92AD"
+        android:pathData="M14,91 l3,-3 l3,3 l-3,3 z"/>
+  <path android:fillColor="#9A92AD"
+        android:pathData="M88,91 l3,-3 l3,3 l-3,3 z"/>
+
+  <!-- 主鸢尾花(中心) - 镂空风格 -->
+  <group android:translateX="54" android:translateY="56"
+         android:scaleX="0.95" android:scaleY="0.95">
+
+    <!-- 左花瓣(向外伸展) -->
+    <path android:fillColor="#E8E4F0"
+          android:pathData="M-2,8
+                            C-12,2 -22,-6 -28,-14
+                            C-26,-8 -22,-2 -18,4
+                            C-14,8 -8,10 -2,8 Z"/>
+
+    <!-- 右花瓣(向上扬) -->
+    <path android:fillColor="#E8E4F0"
+          android:pathData="M2,-12
+                            C-2,-22 4,-30 8,-34
+                            C10,-28 8,-20 6,-14
+                            C4,-12 2,-12 2,-12 Z"/>
+
+    <!-- 中心花瓣(直立) -->
+    <path android:fillColor="#E8E4F0"
+          android:pathData="M-3,-18
+                            C-3,-24 0,-30 4,-30
+                            C8,-30 9,-22 6,-16
+                            C3,-12 0,-14 -3,-18 Z"/>
+
+    <!-- 底部花茎(向下延伸) -->
+    <path android:fillColor="#D4CFE0"
+          android:strokeColor="#D4CFE0"
+          android:strokeWidth="1.5"
+          android:pathData="M0,8 L-1,28"/>
+
+    <!-- 右侧小卷须 -->
+    <path android:fillColor="#D4CFE0"
+          android:pathData="M8,-2
+                            C12,2 14,8 12,12
+                            C10,10 9,6 8,-2 Z"/>
+
+    <!-- 左侧小卷须 -->
+    <path android:fillColor="#D4CFE0"
+          android:pathData="M-8,4
+                            C-14,8 -16,14 -14,18
+                            C-12,14 -10,10 -8,4 Z"/>
+
+  </group>
+
+  <!-- 整体镂空效果:用半透明白色细线条勾勒 -->
+  <group android:translateX="54" android:translateY="56"
+         android:scaleX="0.95" android:scaleY="0.95">
+    <path android:strokeColor="#FFFFFF"
+          android:strokeWidth="0.5"
+          android:fillColor="#00000000"
+          android:pathData="M-2,8
+                            C-12,2 -22,-6 -28,-14
+                            C-26,-8 -22,-2 -18,4
+                            C-14,8 -8,10 -2,8"/>
+    <path android:strokeColor="#FFFFFF"
+          android:strokeWidth="0.5"
+          android:fillColor="#00000000"
+          android:pathData="M2,-12
+                            C-2,-22 4,-30 8,-34
+                            C10,-28 8,-20 6,-14"/>
+  </group>
+
+</vector>
