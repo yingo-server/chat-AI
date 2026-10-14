@@ -217,6 +217,7 @@ class ContextConfig {
         compressPrompt:
             '请把以下对话历史压缩成客观摘要,保留关键事实、用户偏好和未完成的承诺,不超过 400 字。',
         compressModel: 'cn:deepseek-v4-flash',
+      );
 
   factory ContextConfig.fromJson(Map<String, dynamic> j) => ContextConfig(
         maxContextMessages: j['maxContextMessages'] as int? ?? 1000000,
