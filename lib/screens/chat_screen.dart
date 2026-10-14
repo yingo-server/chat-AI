@@ -13,6 +13,7 @@ import '../models/chat.dart';
 import '../services/chat_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/dialogs.dart';
+import '../utils/error_code.dart';
 import '../widgets/chat/message_bubble.dart' as chat;
 import '../widgets/chat/streaming_bubble.dart';
 import '../widgets/export_sheet.dart';
@@ -37,11 +38,8 @@ class _ChatScreenState extends State<ChatScreen> {
   List<Message> _messages = [];
   bool _busy = false;
   StreamBuffer? _buffer;
-
-  /// 已附加的图片 / 文件,会在本轮发送时一起发出
   final List<_Attachment> _attachments = [];
 
-  /// 占位 ValueNotifier — 当没有活跃缓冲时使用
   static final _emptyTextNotifier = ValueNotifier<String>('');
 
   @override
@@ -60,17 +58,23 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _bootstrap() async {
-    final scope = ConfigScope.of(context);
-    final cfg = await scope.store.load();
-    final svc = ChatService(cfg);
-    final msgs = await AppDatabase.instance
-        .listMessages(widget.chat.id!, includeCompressed: false);
-    if (!mounted) return;
-    setState(() {
-      _config = cfg;
-      _service = svc;
-      _messages = msgs;
-    });
+    try {
+      final scope = ConfigScope.of(context);
+      final cfg = await scope.store.load();
+      final svc = ChatService(cfg);
+      final msgs = await AppDatabase.instance
+          .listMessages(widget.chat.id!, includeCompressed: false);
+      if (!mounted) return;
+      setState(() {
+        _config = cfg;
+        _service = svc;
+        _messages = msgs;
+      });
+    } on AppError {
+      rethrow;
+    } catch (e, st) {
+      throw AppError(Ec.sc15.code, Ec.sc15.message, cause: e, stack: st);
+    }
   }
 
   // ===== 附件 =====
@@ -82,9 +86,12 @@ class _ChatScreenState extends State<ChatScreen> {
       if (picked == null) return;
       setState(() => _attachments.add(
           _Attachment.image(File(picked.path), picked.name)));
-    } catch (e) {
+    } on AppError {
+      rethrow;
+    } catch (e, st) {
       if (!mounted) return;
-      showSnack(context, '图片选择失败: $e', error: true);
+      showSnack(context, '图片选择失败: ${ecMessage(e)}', error: true);
+      throw AppError(Ec.sc10.code, Ec.sc10.message, cause: e, stack: st);
     }
   }
 
@@ -96,12 +103,17 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       if (result == null || result.files.isEmpty) return;
       final f = result.files.first;
-      if (f.path == null) return;
-      setState(() => _attachments.add(
-          _Attachment.file(File(f.path!), f.name)));
-    } catch (e) {
+      if (f.path == null) {
+        throw AppError(Ec.pf02.code, Ec.pf02.message);
+      }
+      setState(() =>
+          _attachments.add(_Attachment.file(File(f.path!), f.name)));
+    } on AppError {
+      rethrow;
+    } catch (e, st) {
       if (!mounted) return;
-      showSnack(context, '文件选择失败: $e', error: true);
+      showSnack(context, '文件选择失败: ${ecMessage(e)}', error: true);
+      throw AppError(Ec.sc11.code, Ec.sc11.message, cause: e, stack: st);
     }
   }
 
@@ -115,9 +127,14 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_busy) return;
     var text = _input.text.trim();
     if (text.isEmpty && _attachments.isEmpty) return;
-    if (_service == null || _config == null) return;
+    if (_service == null || _config == null) {
+      showSnack(context, '尚未就绪', error: true);
+      return;
+    }
+    if (widget.chat.id == null) {
+      throw AppError(Ec.md06.code, Ec.md06.message);
+    }
 
-    // 把附件信息拼到 user 消息里(OpenAI images:[text]/... 格式)
     if (_attachments.isNotEmpty) {
       final parts = StringBuffer();
       parts.writeln(text);
@@ -131,14 +148,28 @@ class _ChatScreenState extends State<ChatScreen> {
       text = parts.toString().trim();
     }
 
-    final persisted = await AppDatabase.instance.insertMessage(Message(
-      chatId: widget.chat.id!,
-      role: MessageRole.user,
-      content: text,
-    ));
+    late int persisted;
+    try {
+      persisted = await AppDatabase.instance.insertMessage(Message(
+        chatId: widget.chat.id!,
+        role: MessageRole.user,
+        content: text,
+      ));
+    } on AppError {
+      rethrow;
+    } catch (e, st) {
+      throw AppError(Ec.ch08.code, Ec.ch08.message, cause: e, stack: st);
+    }
 
-    final baseHistory = await AppDatabase.instance
-        .listMessages(widget.chat.id!, includeCompressed: false);
+    late List<Message> baseHistory;
+    try {
+      baseHistory = await AppDatabase.instance
+          .listMessages(widget.chat.id!, includeCompressed: false);
+    } on AppError {
+      rethrow;
+    } catch (e, st) {
+      throw AppError(Ec.ch07.code, Ec.ch07.message, cause: e, stack: st);
+    }
 
     final buf = StreamBuffer(
       charsPerSecond: _resolveStreamSpeed(_config!.userPrefs),
@@ -151,7 +182,11 @@ class _ChatScreenState extends State<ChatScreen> {
       _input.clear();
       _attachments.clear();
     });
-    _scrollToEnd();
+    try {
+      _scrollToEnd();
+    } catch (e, st) {
+      throw AppError(Ec.sc16.code, Ec.sc16.message, cause: e, stack: st);
+    }
 
     String? err;
     try {
@@ -165,12 +200,24 @@ class _ChatScreenState extends State<ChatScreen> {
       )) {
         // drain
       }
-    } catch (e) {
+    } on AppError catch (e) {
       err = e.toString();
+    } catch (e, st) {
+      err = AppError(Ec.sc13.code, Ec.sc13.message, cause: e, stack: st).toString();
     }
 
-    final msgs = await AppDatabase.instance
-        .listMessages(widget.chat.id!, includeCompressed: false);
+    late List<Message> msgs;
+    try {
+      msgs = await AppDatabase.instance
+          .listMessages(widget.chat.id!, includeCompressed: false);
+    } on AppError catch (e) {
+      err = e.toString();
+      msgs = _messages;
+    } catch (e, st) {
+      err = AppError(Ec.ch07.code, Ec.ch07.message, cause: e, stack: st).toString();
+      msgs = _messages;
+    }
+
     if (!mounted) return;
     setState(() {
       _messages = msgs;
@@ -178,163 +225,216 @@ class _ChatScreenState extends State<ChatScreen> {
       _buffer?.dispose();
       _buffer = null;
     });
-    _scrollToEnd();
-    if (err != null) showSnack(context, '错误: $err', error: true);
+    try {
+      _scrollToEnd();
+    } catch (e, st) {
+      throw AppError(Ec.sc16.code, Ec.sc16.message, cause: e, stack: st);
+    }
+    if (err != null) showSnack(context, err, error: true);
   }
 
-  /// 按 userPrefs 互斥规则计算 StreamBuffer 参数
   double _resolveStreamSpeed(UserPrefs p) =>
       p.bufferSize > 0 ? 0.0 : p.streamSpeed.toDouble();
   int _resolveBufferSize(UserPrefs p) =>
       p.streamSpeed > 0 ? 0 : p.bufferSize;
 
   Future<void> _stop() async {
-    setState(() {
-      _busy = false;
-      _buffer?.dispose();
-      _buffer = null;
-    });
-    showSnack(context, '已停止');
+    try {
+      setState(() {
+        _busy = false;
+        _buffer?.dispose();
+        _buffer = null;
+      });
+      showSnack(context, '已停止');
+    } on AppError {
+      rethrow;
+    } catch (e, st) {
+      throw AppError(Ec.sc14.code, Ec.sc14.message, cause: e, stack: st);
+    }
   }
 
   void _scrollToEnd() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scroll.hasClients) return;
-      _scroll.animateTo(_scroll.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut);
-    });
+    try {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_scroll.hasClients) return;
+        _scroll.animateTo(_scroll.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut);
+      });
+    } catch (e, st) {
+      throw AppError(Ec.sc16.code, Ec.sc16.message, cause: e, stack: st);
+    }
   }
 
   Future<void> _export() async {
-    await showExportSheet(context,
-        chat: widget.chat, messages: _messages);
+    try {
+      await showExportSheet(context,
+          chat: widget.chat, messages: _messages);
+    } on AppError {
+      rethrow;
+    } catch (e, st) {
+      throw AppError(Ec.sc06.code, Ec.sc06.message, cause: e, stack: st);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final hasConfig = _config != null && _config!.ai.isValid;
-    final prefs = _config?.userPrefs ?? UserPrefs.defaults;
+    try {
+      final scheme = Theme.of(context).colorScheme;
+      final hasConfig = _config != null && _config!.ai.isValid;
+      final prefs = _config?.userPrefs ?? UserPrefs.defaults;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.chat.title, overflow: TextOverflow.ellipsis),
-        actions: [
-          IconButton(
-            tooltip: '导出 Markdown',
-            icon: const Icon(Icons.ios_share),
-            onPressed: _export,
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          if (!hasConfig)
-            MaterialBanner(
-              backgroundColor: scheme.errorContainer,
-              leading: Icon(Icons.warning_amber_rounded,
-                  color: scheme.onErrorContainer),
-              content: Text('请检查配置',
-                  style: TextStyle(color: scheme.onErrorContainer)),
-              actions: const [SizedBox.shrink()],
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(widget.chat.title, overflow: TextOverflow.ellipsis),
+          actions: [
+            IconButton(
+              tooltip: '导出 Markdown',
+              icon: const Icon(Icons.ios_share),
+              onPressed: _export,
             ),
-          Expanded(
-            child: ListView.builder(
-              key: ValueKey(_messages.length),
-              controller: _scroll,
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 12),
-              itemCount: _messages.length + (_busy ? 1 : 0),
-              itemBuilder: (_, i) {
-                if (i < _messages.length) {
-                  return chat.MessageBubble(message: _messages[i]);
-                }
-                return ValueListenableBuilder<String>(
-                  key: const ValueKey('streaming'),
-                  valueListenable:
-                      _buffer?.displayed ?? _emptyTextNotifier,
-                  builder: (_, text, __) => StreamingBubble(text: text),
-                );
-              },
-            ),
-          ),
-          if (_attachments.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 8),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final a in _attachments)
-                    InputChip(
-                      avatar: Icon(
-                          a.isImage ? Icons.image : Icons.insert_drive_file,
-                          size: 16),
-                      label: Text(a.name, overflow: TextOverflow.ellipsis),
-                      onDeleted: () => _removeAttachment(a),
-                    ),
-                ],
+          ],
+        ),
+        body: Column(
+          children: [
+            if (!hasConfig)
+              MaterialBanner(
+                backgroundColor: scheme.errorContainer,
+                leading: Icon(Icons.warning_amber_rounded,
+                    color: scheme.onErrorContainer),
+                content: Text('请检查配置',
+                    style: TextStyle(color: scheme.onErrorContainer)),
+                actions: const [SizedBox.shrink()],
+              ),
+            Expanded(
+              child: ListView.builder(
+                key: ValueKey(_messages.length),
+                controller: _scroll,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 12),
+                itemCount: _messages.length + (_busy ? 1 : 0),
+                itemBuilder: (_, i) {
+                  if (i < _messages.length) {
+                    try {
+                      return chat.MessageBubble(message: _messages[i]);
+                    } catch (e, st) {
+                      throw AppError(Ec.wd00.code, Ec.wd00.message,
+                          cause: e, stack: st);
+                    }
+                  }
+                  return ValueListenableBuilder<String>(
+                    key: const ValueKey('streaming'),
+                    valueListenable:
+                        _buffer?.displayed ?? _emptyTextNotifier,
+                    builder: (_, text, __) {
+                      try {
+                        return StreamingBubble(text: text);
+                      } catch (e, st) {
+                        throw AppError(Ec.wd01.code, Ec.wd01.message,
+                            cause: e, stack: st);
+                      }
+                    },
+                  );
+                },
               ),
             ),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 8, vertical: 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  IconButton(
-                    tooltip: '附加图片',
-                    icon: const Icon(Icons.image_outlined),
-                    onPressed: _busy ? null : _pickImage,
-                  ),
-                  IconButton(
-                    tooltip: '附加文件',
-                    icon: const Icon(Icons.attach_file),
-                    onPressed: _busy ? null : _pickFile,
-                  ),
-                  Expanded(
-                    child: TextField(
-                      controller: _input,
-                      focusNode: _focus,
-                      minLines: 1,
-                      maxLines: 5,
-                      enabled: !_busy,
-                      style: TextStyle(fontSize: prefs.fontSize.toDouble()),
-                      decoration: InputDecoration(
-                        hintText: '输入消息…',
-                        isDense: true,
+            if (_attachments.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 8),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final a in _attachments)
+                      InputChip(
+                        avatar: Icon(
+                            a.isImage
+                                ? Icons.image
+                                : Icons.insert_drive_file,
+                            size: 16),
+                        label: Text(a.name, overflow: TextOverflow.ellipsis),
+                        onDeleted: () => _removeAttachment(a),
                       ),
-                      onSubmitted: (_) => _send(),
+                  ],
+                ),
+              ),
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    IconButton(
+                      tooltip: '附加图片',
+                      icon: const Icon(Icons.image_outlined),
+                      onPressed: _busy ? null : _pickImage,
                     ),
-                  ),
-                  const SizedBox(width: 4),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 150),
-                    child: _busy
-                        ? FilledButton.tonalIcon(
-                            key: const ValueKey('stop'),
-                            onPressed: _stop,
-                            icon: const Icon(Icons.stop),
-                            label: const Text('停止'),
-                          )
-                        : IconButton.filled(
-                            key: const ValueKey('send'),
-                            onPressed: hasConfig ? _send : null,
-                            icon: const Icon(Icons.arrow_upward),
-                            tooltip: '发送',
-                          ),
-                  ),
-                ],
+                    IconButton(
+                      tooltip: '附加文件',
+                      icon: const Icon(Icons.attach_file),
+                      onPressed: _busy ? null : _pickFile,
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: _input,
+                        focusNode: _focus,
+                        minLines: 1,
+                        maxLines: 5,
+                        enabled: !_busy,
+                        style:
+                            TextStyle(fontSize: prefs.fontSize.toDouble()),
+                        decoration: const InputDecoration(
+                          hintText: '输入消息…',
+                          isDense: true,
+                        ),
+                        onSubmitted: (_) {
+                          try {
+                            _send();
+                          } on AppError catch (e) {
+                            showSnack(context, ecMessage(e), error: true);
+                          } catch (e, st) {
+                            showSnack(
+                                context,
+                                AppError(Ec.sc17.code, Ec.sc17.message,
+                                        cause: e, stack: st)
+                                    .toString(),
+                                error: true);
+                          }
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 150),
+                      child: _busy
+                          ? FilledButton.tonalIcon(
+                              key: const ValueKey('stop'),
+                              onPressed: _stop,
+                              icon: const Icon(Icons.stop),
+                              label: const Text('停止'),
+                            )
+                          : IconButton.filled(
+                              key: const ValueKey('send'),
+                              onPressed: hasConfig ? _send : null,
+                              icon: const Icon(Icons.arrow_upward),
+                              tooltip: '发送',
+                            ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
-      ),
-    );
+          ],
+        ),
+      );
+    } on AppError {
+      rethrow;
+    } catch (e, st) {
+      throw AppError(Ec.sc00.code, Ec.sc00.message, cause: e, stack: st);
+    }
   }
 }
 

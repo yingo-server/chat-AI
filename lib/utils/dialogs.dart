@@ -1,18 +1,26 @@
 import 'package:flutter/material.dart';
 
-/// 简单的 Snackbar 封装
+import 'error_code.dart';
+
+/// 抛 AppError(Ec.ut0x)
 void showSnack(BuildContext ctx, String msg, {bool error = false}) {
-  ScaffoldMessenger.of(ctx).showSnackBar(
-    SnackBar(
-      content: Text(msg),
-      behavior: SnackBarBehavior.floating,
-      backgroundColor:
-          error ? Theme.of(ctx).colorScheme.errorContainer : null,
-    ),
-  );
+  try {
+    final messenger = ScaffoldMessenger.maybeOf(ctx);
+    if (messenger == null) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: error
+            ? Theme.of(ctx).colorScheme.errorContainer
+            : null,
+      ),
+    );
+  } catch (e, st) {
+    throw AppError(Ec.ut00.code, Ec.ut00.message, cause: e, stack: st);
+  }
 }
 
-/// 自定义 confirm 对话框(避免依赖原生 confirm 在 Web 不可用)
 Future<bool> confirmDialog(
   BuildContext ctx, {
   required String title,
@@ -21,30 +29,34 @@ Future<bool> confirmDialog(
   String cancelLabel = '取消',
   bool destructive = false,
 }) async {
-  final result = await showDialog<bool>(
-    context: ctx,
-    builder: (dialogCtx) => AlertDialog(
-      title: Text(title),
-      content: Text(message),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogCtx, false),
-          child: Text(cancelLabel),
-        ),
-        FilledButton(
-          style: destructive
-              ? FilledButton.styleFrom(
-                  backgroundColor: Colors.red.shade400,
-                  foregroundColor: Colors.white,
-                )
-              : null,
-          onPressed: () => Navigator.pop(dialogCtx, true),
-          child: Text(confirmLabel),
-        ),
-      ],
-    ),
-  );
-  return result ?? false;
+  try {
+    final result = await showDialog<bool>(
+      context: ctx,
+      builder: (dialogCtx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: Text(cancelLabel),
+          ),
+          FilledButton(
+            style: destructive
+                ? FilledButton.styleFrom(
+                    backgroundColor: Colors.red.shade400,
+                    foregroundColor: Colors.white,
+                  )
+                : null,
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  } catch (e, st) {
+    throw AppError(Ec.ut01.code, Ec.ut01.message, cause: e, stack: st);
+  }
 }
 
 Future<String?> inputDialog(
@@ -53,26 +65,30 @@ Future<String?> inputDialog(
   String? hint,
   String initialValue = '',
 }) {
-  final ctrl = TextEditingController(text: initialValue);
-  return showDialog<String>(
-    context: ctx,
-    builder: (dialogCtx) => AlertDialog(
-      title: Text(title),
-      content: TextField(
-        controller: ctrl,
-        autofocus: true,
-        decoration: InputDecoration(hintText: hint),
+  try {
+    final ctrl = TextEditingController(text: initialValue);
+    return showDialog<String>(
+      context: ctx,
+      builder: (dialogCtx) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: InputDecoration(hintText: hint),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogCtx, ctrl.text.trim()),
+            child: const Text('确定'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogCtx),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(dialogCtx, ctrl.text.trim()),
-          child: const Text('确定'),
-        ),
-      ],
-    ),
-  );
+    );
+  } catch (e, st) {
+    throw AppError(Ec.ut02.code, Ec.ut02.message, cause: e, stack: st);
+  }
 }

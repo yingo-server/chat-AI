@@ -20,6 +20,7 @@ library;
 
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import '../utils/error_code.dart';
 import '../utils/vault.dart' as vault;
 
 class AppConfig {
@@ -62,23 +63,29 @@ class AppConfig {
   }
 
   factory AppConfig.fromJson(Map<String, dynamic> json) {
-    return AppConfig(
-      ai: AiConfig.fromVault(), // 端点/密钥始终来自 vault
-      context: ContextConfig.fromJson(
-          json['context'] as Map<String, dynamic>? ?? {}),
-      recurringPrompts: (json['recurringPrompts'] as List? ?? const [])
-          .map((e) => RecurringPrompt.fromJson(e as Map<String, dynamic>))
-          .toList(),
-      systemPrompts: (json['systemPrompts'] as List? ?? const [])
-          .map((e) => SystemPrompt.fromJson(e as Map<String, dynamic>))
-          .toList(),
-      userPrefs:
-          UserPrefs.fromJson(json['userPrefs'] as Map<String, dynamic>? ?? const {}),
-    );
+    try {
+      return AppConfig(
+        ai: AiConfig.fromVault(),
+        context: ContextConfig.fromJson(
+            json['context'] as Map<String, dynamic>? ?? {}),
+        recurringPrompts: (json['recurringPrompts'] as List? ?? const [])
+            .map((e) => RecurringPrompt.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        systemPrompts: (json['systemPrompts'] as List? ?? const [])
+            .map((e) => SystemPrompt.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        userPrefs: UserPrefs.fromJson(
+            json['userPrefs'] as Map<String, dynamic>? ?? const {}),
+      );
+    } catch (e, st) {
+      if (e is AppError) rethrow;
+      throw AppError(Ec.md02.code, Ec.md02.message, cause: e, stack: st);
+    }
   }
 
-  Map<String, dynamic> toJson({String secretPassphrase = ''}) => {
-        // 不导出 endpoint / apiKey
+  Map<String, dynamic> toJson({String secretPassphrase = ''}) {
+    try {
+      return {
         'ai': {
           'model': ai.model,
           'temperature': ai.temperature,
@@ -87,10 +94,15 @@ class AppConfig {
           'streamCharsPerSecond': ai.streamCharsPerSecond,
         },
         'context': context.toJson(),
-        'recurringPrompts': recurringPrompts.map((e) => e.toJson()).toList(),
+        'recurringPrompts':
+            recurringPrompts.map((e) => e.toJson()).toList(),
         'systemPrompts': systemPrompts.map((e) => e.toJson()).toList(),
         'userPrefs': userPrefs.toJson(),
       };
+    } catch (e, st) {
+      throw AppError(Ec.md08.code, Ec.md08.message, cause: e, stack: st);
+    }
+  }
 
   String encode({String secretPassphrase = ''}) =>
       const JsonEncoder.withIndent('  ').convert(toJson());
@@ -199,8 +211,9 @@ class AiConfig {
     double? streamCharsPerSecond,
     String? firstTurnReasoning,
     String? subsequentReasoning,
-  }) =>
-      AiConfig(
+  }) {
+    try {
+      return AiConfig(
         endpoint: endpoint ?? this.endpoint,
         apiKey: apiKey ?? this.apiKey,
         model: model ?? this.model,
@@ -214,6 +227,10 @@ class AiConfig {
         subsequentReasoning:
             subsequentReasoning ?? this.subsequentReasoning,
       );
+    } catch (e, st) {
+      throw AppError(Ec.md04.code, Ec.md04.message, cause: e, stack: st);
+    }
+  }
 }
 
 class ContextConfig {

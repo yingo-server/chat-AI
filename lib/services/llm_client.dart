@@ -120,9 +120,9 @@ class LlmStreamClient {
         }
         controller.add(const LlmEvent.done());
         await controller.close();
-      } on AppError {
+      } on AppError catch (e) {
         if (!controller.isClosed) {
-          controller.addError(LastLlmError());
+          controller.addError(e);
           await controller.close();
         }
       } catch (e, st) {
