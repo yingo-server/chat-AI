@@ -23,6 +23,18 @@
 #include <dlfcn.h>
 #include <pthread.h>
 #include <string>
+#include <android/log.h>
+
+#define LOG_TAG "VAULT"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define LOG_HEX(label, data, n) do { \
+    char _buf[1024]; int _p = 0; \
+    _p += snprintf(_buf + _p, 1024 - _p, "%s [%d]: ", label, (int)(n)); \
+    for (int _i = 0; _i < (n) && _p < 1020; _i++) \
+        _p += snprintf(_buf + _p, 1024 - _p, "%02x ", ((uint8_t*)(data))[_i]); \
+    LOGI("%s", _buf); \
+} while (0)
 
 extern "C" {
 
@@ -264,11 +276,15 @@ int vault_set_master(const uint8_t *key, int len) {
     if (!key || len != 32) return E_N10;
     memcpy(s_master, key, 32);
     s_master_set = 1;
+    LOGI("set_master OK");
+    LOG_HEX("master", s_master, 32);
     return 0;
 }
 
 __attribute__((visibility("default")))
 int vault_init(const uint8_t *vault_bin, int vault_len) {
+    LOGI("vault_init: len=%d master_set=%d", vault_len, s_master_set);
+    LOG_HEX("vault_first16", vault_bin, vault_len < 16 ? vault_len : 16);
     if (!s_master_set) return E_N02;
     pthread_mutex_lock(&s_lock);
     if (!security_check()) {
@@ -280,13 +296,20 @@ int vault_init(const uint8_t *vault_bin, int vault_len) {
         memcpy(s_url, fake_url, s_url_len + 1);
         memcpy(s_key, fake_key, s_key_len + 1);
         pthread_mutex_unlock(&s_lock);
-        return E_N01; // tampered
+        LOGE("security_check FAILED (tampered/rooted)");
+        return E_N01;
     }
     int ok = parse_vault(vault_bin, vault_len);
     s_initialized = ok;
     pthread_mutex_unlock(&s_lock);
-    if (!ok) return E_N04; // 简化:都归 parse failed
-    return 0;
+    if (ok) {
+        LOGI("parse_vault OK: url_len=%zu key_len=%zu", s_url_len, s_key_len);
+        LOG_HEX("url_plain", s_url, s_url_len);
+        LOG_HEX("key_plain", s_key, s_key_len);
+    } else {
+        LOGE("parse_vault FAILED");
+    }
+    return ok ? 0 : E_N04;
 }
 
 __attribute__((visibility("default")))

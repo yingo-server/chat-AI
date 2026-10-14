@@ -1,6 +1,4 @@
 /// 消息角色
-import '../utils/error_code.dart';
-
 enum MessageRole {
   system,
   user,
@@ -61,9 +59,7 @@ class Message {
     );
   }
 
-  Map<String, dynamic> toMap() {
-    try {
-      return {
+  Map<String, dynamic> toMap() => {
         'id': id,
         'chat_id': chatId,
         'role': role.name,
@@ -72,14 +68,8 @@ class Message {
         'token_count': tokenCount,
         'compressed': compressed ? 1 : 0,
       };
-    } catch (e, st) {
-      throw AppError(Ec.md08.code, Ec.md08.message, cause: e, stack: st);
-    }
-  }
 
-  factory Message.fromMap(Map<String, dynamic> m) {
-    try {
-      return Message(
+  factory Message.fromMap(Map<String, dynamic> m) => Message(
         id: m['id'] as int?,
         chatId: m['chat_id'] as int,
         role: MessageRole.values.firstWhere((r) => r.name == m['role']),
@@ -88,10 +78,6 @@ class Message {
         tokenCount: m['token_count'] as int?,
         compressed: (m['compressed'] as int? ?? 0) == 1,
       );
-    } catch (e, st) {
-      throw AppError(Ec.md01.code, Ec.md01.message, cause: e, stack: st);
-    }
-  }
 }
 
 /// 一个对话
@@ -135,9 +121,7 @@ class Chat {
     );
   }
 
-  Map<String, dynamic> toMap() {
-    try {
-      return {
+  Map<String, dynamic> toMap() => {
         'id': id,
         'title': title,
         'created_at': createdAt.millisecondsSinceEpoch,
@@ -145,14 +129,8 @@ class Chat {
         'system_prompt_id': systemPromptId,
         'extra_system_prompt': extraSystemPrompt,
       };
-    } catch (e, st) {
-      throw AppError(Ec.md08.code, Ec.md08.message, cause: e, stack: st);
-    }
-  }
 
-  factory Chat.fromMap(Map<String, dynamic> m) {
-    try {
-      return Chat(
+  factory Chat.fromMap(Map<String, dynamic> m) => Chat(
         id: m['id'] as int?,
         title: m['title'] as String,
         createdAt: DateTime.fromMillisecondsSinceEpoch(m['created_at'] as int),
@@ -160,8 +138,4 @@ class Chat {
         systemPromptId: m['system_prompt_id'] as String? ?? 'default',
         extraSystemPrompt: m['extra_system_prompt'] as String?,
       );
-    } catch (e, st) {
-      throw AppError(Ec.md00.code, Ec.md00.message, cause: e, stack: st);
-    }
-  }
 }

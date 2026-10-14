@@ -1,39 +1,32 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
 import '../models/app_config.dart';
-import '../utils/error_code.dart';
 
+/// 一条 OpenAI 兼容消息
 class ApiMessage {
   final String role;
   final String content;
   const ApiMessage(this.role, this.content);
+
   Map<String, dynamic> toJson() => {'role': role, 'content': content};
 }
 
-class LlmEvent {
-  final String? delta;
-  final Map<String, dynamic>? usage;
-  final bool done;
-  const LlmEvent.delta(String this.delta)
-      : usage = null,
-        done = false;
-  const LlmEvent.usage(this.usage) : delta = null, done = false;
-  const LlmEvent.done()
-      : delta = null,
-        usage = null,
-        done = true;
+class _ChatRequest {
+  final List<ApiMessage> messages;
+  final String? reasoningEffort; // 'low' / 'high' / 'max' / 'none' / null
+  const _ChatRequest(this.messages, this.reasoningEffort);
 }
 
-/// 流式客户端 — 抛 AppError(带错误码)
+/// 流式客户端 — 解析 SSE 的 `data: {...}` 帧
 class LlmStreamClient {
   final AiConfig config;
   LlmStreamClient(this.config);
 
-  /// 错误码:Ec.llm00..llm09
+  /// 流式调用。每次拿到增量文本时调用 [onDelta]。
+  /// [firstTurn]=true 时,使用 [AiConfig.firstTurnReasoning];否则 [AiConfig.subsequentReasoning]。
   Stream<LlmEvent> chatStream(
     List<ApiMessage> messages, {
     bool firstTurn = false,
@@ -72,17 +65,16 @@ class LlmStreamClient {
           })
           ..body = jsonEncode(body);
         final resp = await client.send(req).timeout(
-            Duration(seconds: config.requestTimeoutSeconds),
-            onTimeout: () {
-              throw AppError(Ec.llm05.code, Ec.llm05.message);
-            });
+              Duration(seconds: config.requestTimeoutSeconds),
+            );
         if (resp.statusCode != 200) {
           final err = await resp.stream.bytesToString();
-          throw AppError(
-            Ec.llm01.code,
-            '${Ec.llm01.message}: ${err.length > 200 ? '${err.substring(0, 200)}…' : err}',
-          );
+          controller.addError(
+              'HTTP ${resp.statusCode}: ${err.length > 200 ? '${err.substring(0, 200)}…' : err}');
+          await controller.close();
+          return;
         }
+
         String buffer = '';
         final decoder = const Utf8Decoder();
         await for (final chunk
@@ -113,25 +105,14 @@ class LlmStreamClient {
               if (usage is Map) {
                 controller.add(LlmEvent.usage(usage.cast()));
               }
-            } on FormatException catch (e) {
-              throw AppError(Ec.llm04.code, Ec.llm04.message, cause: e);
             } catch (_) {/* 忽略坏帧 */}
           }
         }
         controller.add(const LlmEvent.done());
         await controller.close();
-      } on AppError catch (e) {
-        if (!controller.isClosed) {
-          controller.addError(e);
-          await controller.close();
-        }
       } catch (e, st) {
-        if (e is SocketException) {
-          controller.addError(AppError(Ec.llm08.code, Ec.llm08.message, cause: e, stack: st));
-        } else {
-          controller.addError(AppError(Ec.llm00.code, Ec.llm00.message, cause: e, stack: st));
-        }
-        if (!controller.isClosed) await controller.close();
+        controller.addError(e, st);
+        await controller.close();
       } finally {
         client.close();
       }
@@ -142,7 +123,7 @@ class LlmStreamClient {
     return controller.stream;
   }
 
-  /// 非流式;抛 AppError
+  /// 非流式单次调用(用于压缩)
   Future<String> chatOnce(
     List<ApiMessage> messages, {
     String? overrideModel,
@@ -161,44 +142,34 @@ class LlmStreamClient {
     if (reasoningEffort != null && reasoningEffort.isNotEmpty) {
       body['reasoning_effort'] = reasoningEffort;
     }
-    try {
-      final resp = await http
-          .post(
-            Uri.parse(config.endpoint),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer ${config.apiKey}',
-            },
-            body: jsonEncode(body),
-          )
-          .timeout(Duration(seconds: config.requestTimeoutSeconds),
-              onTimeout: () {
-            throw AppError(Ec.llm05.code, Ec.llm05.message);
-          });
-      if (resp.statusCode != 200) {
-        throw AppError(
-          Ec.llm01.code,
-          '${Ec.llm01.message}: ${resp.body}',
-        );
-      }
-      final j = jsonDecode(resp.body) as Map<String, dynamic>;
-      final content = j['choices']?[0]?['message']?['content'] as String?;
-      if (content == null) {
-        throw AppError(Ec.llm06.code, Ec.llm06.message);
-      }
-      return content;
-    } on AppError {
-      rethrow;
-    } on SocketException catch (e, st) {
-      throw AppError(Ec.llm08.code, Ec.llm08.message, cause: e, stack: st);
-    } catch (e, st) {
-      throw AppError(Ec.llm07.code, Ec.llm07.message, cause: e, stack: st);
+    final resp = await http
+        .post(
+          Uri.parse(config.endpoint),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${config.apiKey}',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(Duration(seconds: config.requestTimeoutSeconds));
+    if (resp.statusCode != 200) {
+      throw 'HTTP ${resp.statusCode}: ${resp.body}';
     }
+    final j = jsonDecode(resp.body) as Map<String, dynamic>;
+    return (j['choices']?[0]?['message']?['content'] as String?) ?? '';
   }
 }
 
-/// 占位错误类型,标识"流中抛了 AppError"
-class LastLlmError implements Exception {
-  @override
-  String toString() => 'llm stream error';
+class LlmEvent {
+  final String? delta;
+  final Map<String, dynamic>? usage;
+  final bool done;
+  const LlmEvent.delta(String this.delta)
+      : usage = null,
+        done = false;
+  const LlmEvent.usage(this.usage) : delta = null, done = false;
+  const LlmEvent.done()
+      : delta = null,
+        usage = null,
+        done = true;
 }

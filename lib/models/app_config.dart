@@ -20,7 +20,6 @@ library;
 
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import '../utils/error_code.dart';
 import '../utils/vault.dart' as vault;
 
 class AppConfig {
@@ -48,13 +47,8 @@ class AppConfig {
 
   /// 从 native vault 构造(端点/key 来自加密存储)
   factory AppConfig.fromVault({UserPrefs? prefs}) {
-    final (cfg, ec) = AiConfig.fromVaultWithEc();
-    if (cfg == null) {
-      // fallback:空 config
-      return AppConfig.empty();
-    }
     return AppConfig(
-      ai: cfg,
+      ai: AiConfig.fromVault(),
       context: ContextConfig.empty(),
       recurringPrompts: const [],
       systemPrompts: [SystemPrompt.defaultPrompt()],
@@ -63,29 +57,23 @@ class AppConfig {
   }
 
   factory AppConfig.fromJson(Map<String, dynamic> json) {
-    try {
-      return AppConfig(
-        ai: AiConfig.fromVault(),
-        context: ContextConfig.fromJson(
-            json['context'] as Map<String, dynamic>? ?? {}),
-        recurringPrompts: (json['recurringPrompts'] as List? ?? const [])
-            .map((e) => RecurringPrompt.fromJson(e as Map<String, dynamic>))
-            .toList(),
-        systemPrompts: (json['systemPrompts'] as List? ?? const [])
-            .map((e) => SystemPrompt.fromJson(e as Map<String, dynamic>))
-            .toList(),
-        userPrefs: UserPrefs.fromJson(
-            json['userPrefs'] as Map<String, dynamic>? ?? const {}),
-      );
-    } catch (e, st) {
-      if (e is AppError) rethrow;
-      throw AppError(Ec.md02.code, Ec.md02.message, cause: e, stack: st);
-    }
+    return AppConfig(
+      ai: AiConfig.fromVault(), // 端点/密钥始终来自 vault
+      context: ContextConfig.fromJson(
+          json['context'] as Map<String, dynamic>? ?? {}),
+      recurringPrompts: (json['recurringPrompts'] as List? ?? const [])
+          .map((e) => RecurringPrompt.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      systemPrompts: (json['systemPrompts'] as List? ?? const [])
+          .map((e) => SystemPrompt.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      userPrefs:
+          UserPrefs.fromJson(json['userPrefs'] as Map<String, dynamic>? ?? const {}),
+    );
   }
 
-  Map<String, dynamic> toJson({String secretPassphrase = ''}) {
-    try {
-      return {
+  Map<String, dynamic> toJson({String secretPassphrase = ''}) => {
+        // 不导出 endpoint / apiKey
         'ai': {
           'model': ai.model,
           'temperature': ai.temperature,
@@ -94,15 +82,10 @@ class AppConfig {
           'streamCharsPerSecond': ai.streamCharsPerSecond,
         },
         'context': context.toJson(),
-        'recurringPrompts':
-            recurringPrompts.map((e) => e.toJson()).toList(),
+        'recurringPrompts': recurringPrompts.map((e) => e.toJson()).toList(),
         'systemPrompts': systemPrompts.map((e) => e.toJson()).toList(),
         'userPrefs': userPrefs.toJson(),
       };
-    } catch (e, st) {
-      throw AppError(Ec.md08.code, Ec.md08.message, cause: e, stack: st);
-    }
-  }
 
   String encode({String secretPassphrase = ''}) =>
       const JsonEncoder.withIndent('  ').convert(toJson());
@@ -177,25 +160,19 @@ class AiConfig {
       );
 
   /// 从 native vault 读 endpoint + key
-  /// [outEc] 错误码(0=成功,非 0 见 Ec.* / native E_N0x)
-  static (AiConfig?, int) fromVaultWithEc() {
-    final (ep, epEc) = vault.Vault.endpoint();
-    final (k, kEc) = vault.Vault.apiKey();
-    if (epEc != 0) return (null, epEc);
-    if (kEc != 0) return (null, kEc);
-    return (
-      AiConfig(
-        endpoint: ep!,
-        apiKey: k!,
-        model: 'cn:deepseek-v4-flash',
-        temperature: 0.7,
-        maxTokens: 16384,
-        requestTimeoutSeconds: 120,
-        streamCharsPerSecond: 24,
-        firstTurnReasoning: 'low',
-        subsequentReasoning: 'none',
-      ),
-      0
+  static AiConfig fromVault() {
+    final ep = vault.Vault.endpoint() ?? '';
+    final k = vault.Vault.apiKey() ?? '';
+    return AiConfig(
+      endpoint: ep,
+      apiKey: k,
+      model: 'cn:deepseek-v4-flash',
+      temperature: 0.7,
+      maxTokens: 16384,
+      requestTimeoutSeconds: 120,
+      streamCharsPerSecond: 24,
+      firstTurnReasoning: 'low',
+      subsequentReasoning: 'none',
     );
   }
 
@@ -211,9 +188,8 @@ class AiConfig {
     double? streamCharsPerSecond,
     String? firstTurnReasoning,
     String? subsequentReasoning,
-  }) {
-    try {
-      return AiConfig(
+  }) =>
+      AiConfig(
         endpoint: endpoint ?? this.endpoint,
         apiKey: apiKey ?? this.apiKey,
         model: model ?? this.model,
@@ -227,10 +203,6 @@ class AiConfig {
         subsequentReasoning:
             subsequentReasoning ?? this.subsequentReasoning,
       );
-    } catch (e, st) {
-      throw AppError(Ec.md04.code, Ec.md04.message, cause: e, stack: st);
-    }
-  }
 }
 
 class ContextConfig {

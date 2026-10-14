@@ -90,25 +90,10 @@ jobs:
           mkdir -p android/app/src/main/cpp
           cp tools/vault.cpp android/app/src/main/cpp/vault.cpp
           cp tools/CMakeLists.txt android/app/src/main/cpp/CMakeLists.txt
-          # 自定义图标
-          mkdir -p android/app/src/main/res/drawable
-          mkdir -p android/app/src/main/res/mipmap-anydpi-v26
-          cp tools/res/drawable/ic_launcher_background.xml android/app/src/main/res/drawable/
-          cp tools/res/drawable/ic_launcher_foreground.xml android/app/src/main/res/drawable/
-          cp tools/res/mipmap-anydpi-v26/ic_launcher.xml android/app/src/main/res/mipmap-anydpi-v26/
-          cp tools/res/mipmap-anydpi-v26/ic_launcher_round.xml android/app/src/main/res/mipmap-anydpi-v26/
           sed -i 's/minSdkVersion 21/minSdkVersion 23/g' android/app/build.gradle || true
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' android/app/build.gradle || true
           sed -i 's/minifyEnabled false/minifyEnabled true/g' android/app/build.gradle
           sed -i 's/shrinkResources false/shrinkResources true/g' android/app/build.gradle
-          # 应用签名(debug.keystore 由 CI 临时生成)
-          if [ ! -f ~/.android/debug.keystore ]; then
-            mkdir -p ~/.android
-            keytool -genkey -v -keystore ~/.android/debug.keystore \
-              -storepass android -alias androiddebugkey -keypass android \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=AI Chat Debug, O=AI Chat, C=CN" 2>&1 | tail -3
-          fi
 
       - name: Restore vault.bin
         uses: actions/download-artifact@v4
@@ -198,25 +183,10 @@ jobs:
           mkdir -p android/app/src/main/cpp
           cp tools/vault.cpp android/app/src/main/cpp/vault.cpp
           cp tools/CMakeLists.txt android/app/src/main/cpp/CMakeLists.txt
-          # 自定义图标
-          mkdir -p android/app/src/main/res/drawable
-          mkdir -p android/app/src/main/res/mipmap-anydpi-v26
-          cp tools/res/drawable/ic_launcher_background.xml android/app/src/main/res/drawable/
-          cp tools/res/drawable/ic_launcher_foreground.xml android/app/src/main/res/drawable/
-          cp tools/res/mipmap-anydpi-v26/ic_launcher.xml android/app/src/main/res/mipmap-anydpi-v26/
-          cp tools/res/mipmap-anydpi-v26/ic_launcher_round.xml android/app/src/main/res/mipmap-anydpi-v26/
           sed -i 's/minSdkVersion 21/minSdkVersion 23/g' android/app/build.gradle || true
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' android/app/build.gradle || true
           sed -i 's/minifyEnabled false/minifyEnabled true/g' android/app/build.gradle
           sed -i 's/shrinkResources false/shrinkResources true/g' android/app/build.gradle
-          # 应用签名(debug.keystore 由 CI 临时生成)
-          if [ ! -f ~/.android/debug.keystore ]; then
-            mkdir -p ~/.android
-            keytool -genkey -v -keystore ~/.android/debug.keystore \
-              -storepass android -alias androiddebugkey -keypass android \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=AI Chat Debug, O=AI Chat, C=CN" 2>&1 | tail -3
-          fi
 
       - name: Restore vault.bin
         uses: actions/download-artifact@v4
@@ -306,25 +276,10 @@ jobs:
           mkdir -p android/app/src/main/cpp
           cp tools/vault.cpp android/app/src/main/cpp/vault.cpp
           cp tools/CMakeLists.txt android/app/src/main/cpp/CMakeLists.txt
-          # 自定义图标
-          mkdir -p android/app/src/main/res/drawable
-          mkdir -p android/app/src/main/res/mipmap-anydpi-v26
-          cp tools/res/drawable/ic_launcher_background.xml android/app/src/main/res/drawable/
-          cp tools/res/drawable/ic_launcher_foreground.xml android/app/src/main/res/drawable/
-          cp tools/res/mipmap-anydpi-v26/ic_launcher.xml android/app/src/main/res/mipmap-anydpi-v26/
-          cp tools/res/mipmap-anydpi-v26/ic_launcher_round.xml android/app/src/main/res/mipmap-anydpi-v26/
           sed -i 's/minSdkVersion 21/minSdkVersion 23/g' android/app/build.gradle || true
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' android/app/build.gradle || true
           sed -i 's/minifyEnabled false/minifyEnabled true/g' android/app/build.gradle
           sed -i 's/shrinkResources false/shrinkResources true/g' android/app/build.gradle
-          # 应用签名(debug.keystore 由 CI 临时生成)
-          if [ ! -f ~/.android/debug.keystore ]; then
-            mkdir -p ~/.android
-            keytool -genkey -v -keystore ~/.android/debug.keystore \
-              -storepass android -alias androiddebugkey -keypass android \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=AI Chat Debug, O=AI Chat, C=CN" 2>&1 | tail -3
-          fi
 
       - name: Restore vault.bin
         uses: actions/download-artifact@v4
