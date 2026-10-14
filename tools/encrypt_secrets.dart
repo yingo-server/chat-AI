@@ -3,6 +3,7 @@
 // SHA256(master || salt || counter) 作为 keystream,plaintext XOR keystream
 // 与 C++ 端 vault.cpp 100% 一致
 // 所有函数抛 AppError(8 位错误码)
+// 注意: 工具,纯 Dart,不引用 Flutter
 
 import 'dart:convert';
 import 'dart:io';
@@ -11,7 +12,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
-import '../lib/utils/error_code.dart';
+import 'error_code.dart';
 
 void main(List<String> args) {
   String? endpoint, key, masterHex, out;
