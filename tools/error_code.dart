@@ -25,7 +25,8 @@ class AppError implements Exception {
   final int code;
   final String message;
   final Object? cause;
-  AppError(this.code, this.message, {this.cause});
+  final StackTrace? stack;
+  AppError(this.code, this.message, {this.cause, this.stack});
   @override
   String toString() => 'AppError($code): $message${cause != null ? ' [$cause]' : ''}';
 }
