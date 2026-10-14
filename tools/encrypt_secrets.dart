@@ -1,9 +1,8 @@
-// encrypt_secrets.dart
+// tools/encrypt_secrets.dart — 纯 Dart CLI 工具,不引用 Flutter
 // 加密 endpoint + key 到 vault.bin
 // SHA256(master || salt || counter) 作为 keystream,plaintext XOR keystream
 // 与 C++ 端 vault.cpp 100% 一致
-// 所有函数抛 AppError(8 位错误码)
-// 注意: 工具,纯 Dart,不引用 Flutter
+// 仅抛 AppError(8 位错误码)
 
 import 'dart:convert';
 import 'dart:io';
@@ -11,8 +10,6 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
-
-import 'error_code.dart';
 
 void main(List<String> args) {
   String? endpoint, key, masterHex, out;
@@ -24,7 +21,7 @@ void main(List<String> args) {
   }
   if (endpoint == null || key == null || masterHex == null || out == null) {
     stderr.writeln('usage: --endpoint=URL --key=KEY --master=HEX64 --out=PATH');
-    throw AppError(Ec.bd00.code, Ec.bd00.message);
+    exit(2);
   }
   encryptAndWrite(
     endpoint: endpoint,
@@ -42,12 +39,14 @@ void encryptAndWrite({
 }) {
   Uint8List master;
   try {
-    master = _hexDecode(masterHex);
-  } catch (e, st) {
-    throw AppError(Ec.bd02.code, Ec.bd02.message, cause: e, stack: st);
+    master = Uint8List.fromList(_hexDecode(masterHex));
+  } catch (e) {
+    stderr.writeln('hex decode failed: $e');
+    exit(2);
   }
   if (master.length != 32) {
-    throw AppError(Ec.bd01.code, Ec.bd01.message);
+    stderr.writeln('master must be 32 bytes');
+    exit(2);
   }
 
   final rnd = Random.secure();
@@ -75,78 +74,60 @@ void encryptAndWrite({
   final outBytes = Uint8List.fromList([...bin, ...digest]);
   try {
     File(outPath).writeAsBytesSync(outBytes);
-  } catch (e, st) {
-    throw AppError(Ec.bd03.code, Ec.bd03.message, cause: e, stack: st);
+  } catch (e) {
+    stderr.writeln('write failed: $e');
+    exit(2);
   }
   stdout.writeln('wrote ${outBytes.length} bytes to $outPath');
 
   // 自检
   final verify = _xorCrypt(master, salt, urlCt);
-  String verifyStr;
-  try {
-    verifyStr = utf8.decode(verify);
-  } catch (e, st) {
-    throw AppError(Ec.bd06.code, Ec.bd06.message, cause: e, stack: st);
-  }
-  if (verifyStr != endpoint) {
-    throw AppError(Ec.bd04.code, Ec.bd04.message);
+  if (utf8.decode(verify) != endpoint) {
+    stderr.writeln('SELF-CHECK FAILED: URL mismatch');
+    exit(2);
   }
   final verify2 = _xorCrypt(master, salt2, keyCt);
   if (utf8.decode(verify2) != key) {
-    throw AppError(Ec.bd05.code, Ec.bd05.message);
+    stderr.writeln('SELF-CHECK FAILED: KEY mismatch');
+    exit(2);
   }
   stdout.writeln('self-check passed');
 }
 
 List<int> _xorCrypt(List<int> master, List<int> salt, List<int> input) {
-  try {
-    final out = Uint8List(input.length);
-    var off = 0;
-    var cursor = 0;
-    while (off < input.length) {
-      final hash = _keystreamBlock(master, salt, cursor);
-      final take = (input.length - off) < 32 ? (input.length - off) : 32;
-      for (var i = 0; i < take; i++) {
-        out[off + i] = input[off + i] ^ hash[i];
-      }
-      off += take;
-      cursor++;
+  final out = Uint8List(input.length);
+  var off = 0;
+  var cursor = 0;
+  while (off < input.length) {
+    final hash = _keystreamBlock(master, salt, cursor);
+    final take = (input.length - off) < 32 ? (input.length - off) : 32;
+    for (var i = 0; i < take; i++) {
+      out[off + i] = input[off + i] ^ hash[i];
     }
-    return out;
-  } catch (e, st) {
-    throw AppError(Ec.bd07.code, Ec.bd07.message, cause: e, stack: st);
+    off += take;
+    cursor++;
   }
+  return out;
 }
 
 Uint8List _keystreamBlock(List<int> master, List<int> salt, int counter) {
-  try {
-    final h = AccumulatorSink<Digest>();
-    final sha = sha256.startChunkedConversion(h);
-    sha.add(master);
-    sha.add(salt);
-    final ctr = Uint8List(8);
-    for (var i = 7; i >= 0; i--) {
-      ctr[7 - i] = (counter >> (i * 8)) & 0xff;
-    }
-    sha.add(ctr);
-    sha.close();
-    return Uint8List.fromList(h.events.single.bytes);
-  } catch (e, st) {
-    throw AppError(Ec.bd06.code, Ec.bd06.message, cause: e, stack: st);
+  final ctr = Uint8List(8);
+  for (var i = 7; i >= 0; i--) {
+    ctr[7 - i] = (counter >> (i * 8)) & 0xff;
   }
+  final buf = Uint8List.fromList([...master, ...salt, ...ctr]);
+  final digest = sha256.convert(buf);
+  return Uint8List.fromList(digest.bytes);
 }
 
 List<int> _hexDecode(String s) {
   if (s.length % 2 != 0) {
-    throw AppError(Ec.bd02.code, '${Ec.bd02.message} (odd length)');
+    throw 'odd length';
   }
   final out = <int>[];
   for (var i = 0; i < s.length; i += 2) {
-    final chunk = s.substring(i, i + 2);
-    final v = int.tryParse(chunk, radix: 16);
-    if (v == null) {
-      throw AppError(Ec.bd02.code, '${Ec.bd02.message} (bad hex at $i)');
-    }
+    final v = int.tryParse(s.substring(i, i + 2), radix: 16);
+    if (v == null) throw 'bad hex at $i';
     out.add(v);
   }
   return out;
