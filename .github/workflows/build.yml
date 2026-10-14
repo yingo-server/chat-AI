@@ -16,7 +16,6 @@ jobs:
   prep:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -64,7 +63,7 @@ jobs:
   # ---- 三次构建:每个 ABI 独立 job,互不阻塞 ----
   build-arm64:
     needs: prep
-    if: success() || failure()  # prep 失败不阻断(可能 vault.bin 已有)
+    if: needs.prep.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -87,10 +86,13 @@ jobs:
           cp tools/app.build.gradle android/app/build.gradle
           cp tools/gradle.properties android/gradle.properties
           cp tools/proguard-rules.pro android/app/proguard-rules.pro
+          mkdir -p android/app/src/main/res
+          cp -r tools/res/drawable android/app/src/main/res/
+          cp -r tools/res/mipmap-anydpi-v26 android/app/src/main/res/
+          cp tools/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           mkdir -p android/app/src/main/cpp
           cp tools/vault.cpp android/app/src/main/cpp/vault.cpp
           cp tools/CMakeLists.txt android/app/src/main/cpp/CMakeLists.txt
-          sed -i 's/minSdkVersion 21/minSdkVersion 23/g' android/app/build.gradle || true
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' android/app/build.gradle || true
           sed -i 's/minifyEnabled false/minifyEnabled true/g' android/app/build.gradle
           sed -i 's/shrinkResources false/shrinkResources true/g' android/app/build.gradle
@@ -100,7 +102,35 @@ jobs:
         with:
           name: vault-bin
           path: assets/
-        continue-on-error: true
+
+      - name: Verify vault.bin exists
+        run: |
+          test -s assets/vault.bin || (echo "::error::vault.bin missing"; exit 1)
+          ls -lh assets/vault.bin
+
+      - name: Setup release signing + master header
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          VAULT_MASTER: ${{ secrets.VAULT_MASTER }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is required"; exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$HOME/release.keystore"
+          cat > android/key.properties <<EOF
+          storeFile=$HOME/release.keystore
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          python3 tools/gen_master_header.py \
+            --master="$VAULT_MASTER" \
+            --out=android/app/src/main/cpp/vault_master.h
+          unset KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD VAULT_MASTER
+          ls -lh android/app/src/main/cpp/vault_master.h android/key.properties
 
       - name: Cache pub
         uses: actions/cache@v4
@@ -114,7 +144,6 @@ jobs:
 
       - name: Analyze
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
-        continue-on-error: true
 
       - name: Install p7zip-full + zip
         run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full zip
@@ -125,7 +154,7 @@ jobs:
             --split-debug-info=build/symbols \
             --target-platform=android-arm64 || exit 1
           mkdir -p stage
-          find build/app/outputs/flutter-apk -name "*.apk" -exec cp {} stage/chat-ai-arm64.apk \;
+          ls build/app/outputs/flutter-apk/*.apk | head -1 | xargs -I{} cp {} stage/chat-ai-arm64.apk
           find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-arm64.aab \; 2>/dev/null || true
 
       - name: Build AAB arm64
@@ -157,7 +186,7 @@ jobs:
 
   build-armv7:
     needs: prep
-    if: success() || failure()
+    if: needs.prep.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -180,10 +209,13 @@ jobs:
           cp tools/app.build.gradle android/app/build.gradle
           cp tools/gradle.properties android/gradle.properties
           cp tools/proguard-rules.pro android/app/proguard-rules.pro
+          mkdir -p android/app/src/main/res
+          cp -r tools/res/drawable android/app/src/main/res/
+          cp -r tools/res/mipmap-anydpi-v26 android/app/src/main/res/
+          cp tools/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           mkdir -p android/app/src/main/cpp
           cp tools/vault.cpp android/app/src/main/cpp/vault.cpp
           cp tools/CMakeLists.txt android/app/src/main/cpp/CMakeLists.txt
-          sed -i 's/minSdkVersion 21/minSdkVersion 23/g' android/app/build.gradle || true
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' android/app/build.gradle || true
           sed -i 's/minifyEnabled false/minifyEnabled true/g' android/app/build.gradle
           sed -i 's/shrinkResources false/shrinkResources true/g' android/app/build.gradle
@@ -193,7 +225,35 @@ jobs:
         with:
           name: vault-bin
           path: assets/
-        continue-on-error: true
+
+      - name: Verify vault.bin exists
+        run: |
+          test -s assets/vault.bin || (echo "::error::vault.bin missing"; exit 1)
+          ls -lh assets/vault.bin
+
+      - name: Setup release signing + master header
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          VAULT_MASTER: ${{ secrets.VAULT_MASTER }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is required"; exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$HOME/release.keystore"
+          cat > android/key.properties <<EOF
+          storeFile=$HOME/release.keystore
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          python3 tools/gen_master_header.py \
+            --master="$VAULT_MASTER" \
+            --out=android/app/src/main/cpp/vault_master.h
+          unset KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD VAULT_MASTER
+          ls -lh android/app/src/main/cpp/vault_master.h android/key.properties
 
       - name: Cache pub
         uses: actions/cache@v4
@@ -207,7 +267,6 @@ jobs:
 
       - name: Analyze
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
-        continue-on-error: true
 
       - name: Install p7zip-full + zip
         run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full zip
@@ -218,7 +277,7 @@ jobs:
             --split-debug-info=build/symbols \
             --target-platform=android-arm || exit 1
           mkdir -p stage
-          find build/app/outputs/flutter-apk -name "*.apk" -exec cp {} stage/chat-ai-armv7.apk \;
+          ls build/app/outputs/flutter-apk/*.apk | head -1 | xargs -I{} cp {} stage/chat-ai-armv7.apk
           find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-armv7.aab \; 2>/dev/null || true
 
       - name: Build AAB armv7
@@ -250,7 +309,7 @@ jobs:
 
   build-x64:
     needs: prep
-    if: success() || failure()
+    if: needs.prep.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -273,10 +332,13 @@ jobs:
           cp tools/app.build.gradle android/app/build.gradle
           cp tools/gradle.properties android/gradle.properties
           cp tools/proguard-rules.pro android/app/proguard-rules.pro
+          mkdir -p android/app/src/main/res
+          cp -r tools/res/drawable android/app/src/main/res/
+          cp -r tools/res/mipmap-anydpi-v26 android/app/src/main/res/
+          cp tools/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           mkdir -p android/app/src/main/cpp
           cp tools/vault.cpp android/app/src/main/cpp/vault.cpp
           cp tools/CMakeLists.txt android/app/src/main/cpp/CMakeLists.txt
-          sed -i 's/minSdkVersion 21/minSdkVersion 23/g' android/app/build.gradle || true
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/g' android/app/build.gradle || true
           sed -i 's/minifyEnabled false/minifyEnabled true/g' android/app/build.gradle
           sed -i 's/shrinkResources false/shrinkResources true/g' android/app/build.gradle
@@ -286,7 +348,35 @@ jobs:
         with:
           name: vault-bin
           path: assets/
-        continue-on-error: true
+
+      - name: Verify vault.bin exists
+        run: |
+          test -s assets/vault.bin || (echo "::error::vault.bin missing"; exit 1)
+          ls -lh assets/vault.bin
+
+      - name: Setup release signing + master header
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          VAULT_MASTER: ${{ secrets.VAULT_MASTER }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is required"; exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$HOME/release.keystore"
+          cat > android/key.properties <<EOF
+          storeFile=$HOME/release.keystore
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          python3 tools/gen_master_header.py \
+            --master="$VAULT_MASTER" \
+            --out=android/app/src/main/cpp/vault_master.h
+          unset KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD VAULT_MASTER
+          ls -lh android/app/src/main/cpp/vault_master.h android/key.properties
 
       - name: Cache pub
         uses: actions/cache@v4
@@ -300,7 +390,6 @@ jobs:
 
       - name: Analyze
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
-        continue-on-error: true
 
       - name: Install p7zip-full + zip
         run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full zip
@@ -311,7 +400,7 @@ jobs:
             --split-debug-info=build/symbols \
             --target-platform=android-x64 || exit 1
           mkdir -p stage
-          find build/app/outputs/flutter-apk -name "*.apk" -exec cp {} stage/chat-ai-x64.apk \;
+          ls build/app/outputs/flutter-apk/*.apk | head -1 | xargs -I{} cp {} stage/chat-ai-x64.apk
           find build/app/outputs/bundle -name "*.aab" -exec cp {} stage/chat-ai-x64.aab \; 2>/dev/null || true
 
       - name: Build AAB x86_64

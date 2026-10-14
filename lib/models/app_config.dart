@@ -13,8 +13,8 @@
 /// =====================================================================
 /// - endpoint / apiKey **从不出现于 Dart 源码、不出现于 config.json、不出现于二进制明文**
 /// - 启动时由 native vault (libvault.so) 解密 `assets/vault.bin` 注入到 AiConfig
-/// - vault.bin 本身是 AES-256-CTR 密文,master key 存于 Android Keystore
-/// - libvault.so 内置反调试 / 反 root / 反模拟器检测,违规则返回假 key
+/// - vault.bin 使用 SHA-256 keystream XOR 加密,master key 以混淆形式内嵌于 native 库
+/// - native 层错误码为负数(见 utils/error_code.dart)
 /// =====================================================================
 library;
 
@@ -45,20 +45,19 @@ class AppConfig {
         userPrefs: UserPrefs.defaults,
       );
 
-  /// 从 native vault 构造(端点/key 来自加密存储)
-  factory AppConfig.fromVault({UserPrefs? prefs}) {
-    return AppConfig(
-      ai: AiConfig.fromVault(),
-      context: ContextConfig.empty(),
-      recurringPrompts: const [],
-      systemPrompts: [SystemPrompt.defaultPrompt()],
-      userPrefs: prefs ?? UserPrefs.defaults,
-    );
-  }
-
   factory AppConfig.fromJson(Map<String, dynamic> json) {
+    final aiJson = json['ai'] as Map<String, dynamic>? ?? const {};
     return AppConfig(
-      ai: AiConfig.fromVault(), // 端点/密钥始终来自 vault
+      // 端点/密钥始终来自 vault;非敏感参数从 config.json 的 ai 块读取
+      ai: AiConfig.fromVault().copyWith(
+        model: aiJson['model'] as String? ?? 'cn:deepseek-v4-flash',
+        temperature: (aiJson['temperature'] as num?)?.toDouble() ?? 0.7,
+        maxTokens: (aiJson['maxTokens'] as num?)?.toInt() ?? 16384,
+        requestTimeoutSeconds:
+            (aiJson['requestTimeoutSeconds'] as num?)?.toInt() ?? 120,
+        streamCharsPerSecond:
+            (aiJson['streamCharsPerSecond'] as num?)?.toDouble() ?? 24,
+      ),
       context: ContextConfig.fromJson(
           json['context'] as Map<String, dynamic>? ?? {}),
       recurringPrompts: (json['recurringPrompts'] as List? ?? const [])
@@ -105,19 +104,6 @@ class AppConfig {
         userPrefs: userPrefs ?? this.userPrefs,
       );
 
-  SystemPrompt? promptById(String id) {
-    for (final p in systemPrompts) {
-      if (p.id == id) return p;
-    }
-    return null;
-  }
-
-  RecurringPrompt? get hiddenInjectPrompt {
-    for (final p in recurringPrompts) {
-      if (p.hiddenInject) return p;
-    }
-    return null;
-  }
 }
 
 class AiConfig {
@@ -160,12 +146,13 @@ class AiConfig {
       );
 
   /// 从 native vault 读 endpoint + key
+  /// (验证已在 utils/vault.dart 内完成,错误码在此忽略)
   static AiConfig fromVault() {
-    final ep = vault.Vault.endpoint() ?? '';
-    final k = vault.Vault.apiKey() ?? '';
+    final (ep, _) = vault.Vault.endpoint();
+    final (k, _) = vault.Vault.apiKey();
     return AiConfig(
-      endpoint: ep,
-      apiKey: k,
+      endpoint: ep ?? '',
+      apiKey: k ?? '',
       model: 'cn:deepseek-v4-flash',
       temperature: 0.7,
       maxTokens: 16384,
@@ -176,7 +163,10 @@ class AiConfig {
     );
   }
 
-  bool get isValid => endpoint.isNotEmpty && apiKey.isNotEmpty;
+  bool get isValid =>
+      Uri.tryParse(endpoint)?.hasAbsolutePath == true &&
+      endpoint.startsWith(RegExp(r'https?://')) &&
+      apiKey.isNotEmpty;
 
   AiConfig copyWith({
     String? endpoint,
@@ -226,8 +216,7 @@ class ContextConfig {
         keepRecentMessages: 24,
         compressPrompt:
             '请把以下对话历史压缩成客观摘要,保留关键事实、用户偏好和未完成的承诺,不超过 400 字。',
-        compressModel: 'cn:deepseek-v4.1-flash',
-      );
+        compressModel: 'cn:deepseek-v4-flash',
 
   factory ContextConfig.fromJson(Map<String, dynamic> j) => ContextConfig(
         maxContextMessages: j['maxContextMessages'] as int? ?? 1000000,
@@ -236,7 +225,7 @@ class ContextConfig {
         compressPrompt: j['compressPrompt'] as String? ??
             '请把以下对话历史压缩成客观摘要,保留关键事实、用户偏好和未完成的承诺,不超过 400 字。',
         compressModel:
-            j['compressModel'] as String? ?? 'cn:deepseek-v4.1-flash',
+            j['compressModel'] as String? ?? 'cn:deepseek-v4-flash',
       );
 
   Map<String, dynamic> toJson() => {
@@ -358,10 +347,11 @@ class UserPrefs {
   );
 
   factory UserPrefs.fromJson(Map<String, dynamic> j) => UserPrefs(
-        fontSize: (j['fontSize'] as num?)?.toInt() ?? 15,
-        bufferSize: (j['bufferSize'] as num?)?.toInt() ?? 50,
-        streamSpeed: (j['streamSpeed'] as num?)?.toInt() ?? 0,
-        seedColorIndex: (j['seedColorIndex'] as num?)?.toInt() ?? 3,
+        fontSize: ((j['fontSize'] as num?)?.toInt() ?? 15).clamp(12, 24),
+        bufferSize: ((j['bufferSize'] as num?)?.toInt() ?? 50).clamp(0, 200),
+        streamSpeed: ((j['streamSpeed'] as num?)?.toInt() ?? 0).clamp(0, 120),
+        seedColorIndex:
+            ((j['seedColorIndex'] as num?)?.toInt() ?? 3).clamp(0, 5),
       );
 
   Map<String, dynamic> toJson() => {

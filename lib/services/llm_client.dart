@@ -69,49 +69,57 @@ class LlmStreamClient {
             );
         if (resp.statusCode != 200) {
           final err = await resp.stream.bytesToString();
-          controller.addError(
-              'HTTP ${resp.statusCode}: ${err.length > 200 ? '${err.substring(0, 200)}…' : err}');
+          if (!controller.isClosed) {
+            controller.addError(
+                'HTTP ${resp.statusCode}: ${err.length > 200 ? '${err.substring(0, 200)}…' : err}');
+          }
           await controller.close();
           return;
         }
 
-        String buffer = '';
+        // LineSplitter 已按行切分,直接逐行处理,切勿再按 '\n' 累积查找
         final decoder = const Utf8Decoder();
-        await for (final chunk
+        await for (final lineRaw
             in resp.stream.transform(decoder).transform(const LineSplitter())) {
           if (controller.isClosed) break;
-          buffer += chunk;
-          while (true) {
-            final idx = buffer.indexOf('\n');
-            if (idx < 0) break;
-            final line = buffer.substring(0, idx).trim();
-            buffer = buffer.substring(idx + 1);
-            if (line.isEmpty) continue;
-            if (!line.startsWith('data:')) continue;
-            final payload = line.substring(5).trim();
-            if (payload == '[DONE]') {
-              controller.add(const LlmEvent.done());
-              await controller.close();
-              client.close();
-              return;
-            }
-            try {
-              final j = jsonDecode(payload) as Map<String, dynamic>;
-              final delta = j['choices']?[0]?['delta']?['content'];
-              if (delta is String && delta.isNotEmpty) {
-                controller.add(LlmEvent.delta(delta));
+          final line = lineRaw.trim();
+          if (line.isEmpty || !line.startsWith('data:')) continue;
+          final payload = line.substring(5).trim();
+          if (payload == '[DONE]') {
+            if (!controller.isClosed) controller.add(const LlmEvent.done());
+            await controller.close();
+            client.close();
+            return;
+          }
+          try {
+            final j = jsonDecode(payload) as Map<String, dynamic>;
+            // HTTP 200 但返回错误帧
+            if (j['error'] != null) {
+              final err = j['error'];
+              final msg = err is Map
+                  ? (err['message']?.toString() ?? err.toString())
+                  : err.toString();
+              if (!controller.isClosed) {
+                controller.addError('LLM error: $msg');
               }
-              final usage = j['usage'];
-              if (usage is Map) {
+              continue;
+            }
+            final delta = j['choices']?[0]?['delta']?['content'];
+            if (delta is String && delta.isNotEmpty) {
+              if (!controller.isClosed) controller.add(LlmEvent.delta(delta));
+            }
+            final usage = j['usage'];
+            if (usage is Map) {
+              if (!controller.isClosed) {
                 controller.add(LlmEvent.usage(usage.cast()));
               }
-            } catch (_) {/* 忽略坏帧 */}
-          }
+            }
+          } catch (_) {/* 忽略坏帧 */}
         }
-        controller.add(const LlmEvent.done());
+        if (!controller.isClosed) controller.add(const LlmEvent.done());
         await controller.close();
       } catch (e, st) {
-        controller.addError(e, st);
+        if (!controller.isClosed) controller.addError(e, st);
         await controller.close();
       } finally {
         client.close();

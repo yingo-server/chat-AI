@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -12,9 +13,10 @@ Future<void> main() async {
   await SystemChrome.setPreferredOrientations(
       [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
 
-  // 1) 启动 native vault(从 Android Keystore 拿 master,解密 vault.bin)
+  // 1) 启动 native vault(加载 assets/vault.bin;master 内嵌于 native 库)
   final r = await vault.Vault.init();
-  // 即便 vault init 失败也继续(返回空 endpoint/key,UI 弹错)
+  if (r != 0) debugPrint('vault init: $r');
+  // 即便 vault init 失败也继续(返回空 endpoint/key,UI 由 isValid 弹出 请检查配置)
 
   // 2) 加载 config.json(只含 prefs/context/prompts)
   final store = ConfigStore();

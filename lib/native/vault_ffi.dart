@@ -5,7 +5,7 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
-// 导出符号(从 vault.cpp,带 visibility("default"))
+// 导出符号(从 vault.cpp,带 visibility("default")))
 typedef _VaultInitNative = Int32 Function(
     Pointer<Uint8> vaultBin, Int32 vaultLen);
 typedef _VaultInitDart = int Function(Pointer<Uint8> vaultBin, int vaultLen);
@@ -47,42 +47,44 @@ class VaultFfi {
       _lib.lookupFunction<_VaultWipeNative, _VaultWipeDart>('vault_wipe');
 
   static int init(Uint8List vaultBin) {
-    final ptr = malloc<Uint8>(vaultBin.length);
+    final ptr = calloc<Uint8>(vaultBin.length);
     try {
       ptr.asTypedList(vaultBin.length).setAll(0, vaultBin);
       return _init(ptr, vaultBin.length);
     } finally {
-      malloc.free(ptr);
+      calloc.free(ptr);
     }
   }
 
   static int setMaster(Uint8List key) {
-    final ptr = malloc<Uint8>(key.length);
+    final ptr = calloc<Uint8>(key.length);
     try {
       ptr.asTypedList(key.length).setAll(0, key);
       return _setMaster(ptr, key.length);
     } finally {
       ptr.asTypedList(key.length).fillRange(0, key.length, 0);
-      malloc.free(ptr);
+      calloc.free(ptr);
     }
   }
 
-  static String? getEndpoint() => _readStr(_get);
-  static String? getApiKey() => _readStr(_getKey);
+  static (String?, int) getEndpoint() => _readStr(_get);
+  static (String?, int) getApiKey() => _readStr(_getKey);
 
-  static String? _readStr(int Function(Pointer<Uint8>, int) f) {
-    final buf = malloc<Uint8>(1024);
+  // 返回 (明文, 0) 或 (null, 错误码)
+  static (String?, int) _readStr(int Function(Pointer<Uint8>, int) f) {
+    final buf = calloc<Uint8>(1024);
     try {
       final n = f(buf, 1024);
-      if (n <= 0) return null;
-      // C 字符串以 \0 结尾
+      if (n == 0) return (null, -30000009); // 未初始化
+      if (n < 0) return (null, n); // 负的 8 位错误码
+      if (n > 1023) return (null, -30000003); // 溢出
       var len = 0;
-      while (len < n && buf[len] != 0) len++;
+      while (len < n && len < 1024 && buf[len] != 0) len++;
       final bytes = Uint8List(len);
       for (var i = 0; i < len; i++) bytes[i] = buf[i];
-      return String.fromCharCodes(bytes);
+      return (String.fromCharCodes(bytes), 0);
     } finally {
-      malloc.free(buf);
+      calloc.free(buf);
     }
   }
 

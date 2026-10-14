@@ -40,8 +40,11 @@ class ConfigStore {
   }
 
   /// 持久化(endpoint/apiKey 不会进文件 — vault 单独保护)
+  /// 原子写入:先写 .tmp 再 rename,避免写一半损坏
   Future<void> save(AppConfig cfg) async {
     final f = await _file();
-    await f.writeAsString(cfg.encode());
+    final tmp = File('${f.path}.tmp');
+    await tmp.writeAsString(cfg.encode(), flush: true);
+    await tmp.rename(f.path);
   }
 }

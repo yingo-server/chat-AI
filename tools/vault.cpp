@@ -1,16 +1,18 @@
-// vault.cpp — 轻量级密钥保护
-// 用 AES-256-CTR 实现简单,关键点是 Dart 端 encrypt_secrets.dart 和 C++ 端完全一致的字节序
-// 如果解密后字符串不是 ASCII 可见字符,大概率是字节序不匹配 — 这种情况下我们改用 XOR 模式
-// 为了简化 + 100% 兼容,我们改用: XOR with rolling key derived from SHA256(master)
+// vault.cpp — 密钥保险库(SHA-256 keystream XOR + 反调试)
 //
-// master key 不在二进制中,运行时从 vault_set_master 注入。
-// vault.bin 格式:
-//   [4 bytes]  magic "VLT1"
-//   [16 bytes] 派生 iv(实际是 master 的前 16 字节,XOR 后)
-//   [N bytes]  ciphertext(URL)  = plaintext XOR stream1
-//   [4 bytes]  SEP = 0xFF 0xFE 0xFD 0xFC
-//   [M bytes]  ciphertext(KEY)  = plaintext XOR stream2
-//   [32 bytes] HMAC = SHA256(master)(校验用)
+// 设计:
+//   vault.bin 格式:
+//     [4 bytes]  magic "VLT1"
+//     [16 bytes] salt(随机)
+//     [N bytes]  ciphertext(URL)  = URL XOR keystream(master, salt, 0)
+//     [4 bytes]  SEP = 0xFF 0xFE 0xFD 0xFC
+//     [M bytes]  ciphertext(KEY)  = KEY XOR keystream(master, salt2, 0), salt2 = salt ^ [0]=0xA5
+//     [32 bytes] trailer = SHA256(master)(用于检测 master 不匹配)
+//
+//   keystream(master, salt, n): 逐 32 字节块 SHA256(master 32B || salt 16B || counter 8B-BE)
+//
+// master key 由 Dart 端从 Android Keystore 派生并注入(vault_set_master)。
+// 一切错误以负值返回;成功返回 >= 0。
 
 #include <cstdint>
 #include <cstring>
@@ -25,16 +27,17 @@
 #include <string>
 #include <android/log.h>
 
+// 构建时注入的混淆 master(CI 生成)。本地缺失时降级为未嵌入。
+#if __has_include("vault_master.h")
+#include "vault_master.h"
+#endif
+#ifndef VAULT_HAS_EMBEDDED_MASTER
+#define VAULT_HAS_EMBEDDED_MASTER 0
+#endif
+
 #define LOG_TAG "VAULT"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
-#define LOG_HEX(label, data, n) do { \
-    char _buf[1024]; int _p = 0; \
-    _p += snprintf(_buf + _p, 1024 - _p, "%s [%d]: ", label, (int)(n)); \
-    for (int _i = 0; _i < (n) && _p < 1020; _i++) \
-        _p += snprintf(_buf + _p, 1024 - _p, "%02x ", ((uint8_t*)(data))[_i]); \
-    LOGI("%s", _buf); \
-} while (0)
 
 extern "C" {
 
@@ -57,6 +60,7 @@ static const uint32_t K256[64] = {
     0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
 };
 #define ROR32(x,n) (((x) >> (n)) | ((x) << (32 - (n))))
+
 static void sha256_transform(sha256_ctx *c, const uint8_t *d) {
     uint32_t w[64], a,b,c2,d2,e,f,g,h,t1,t2;
     for (int i=0;i<16;i++) {
@@ -118,42 +122,48 @@ static void sha256_final(sha256_ctx *c, uint8_t *out) {
     }
 }
 
-// 派生 keystream:用 master + 索引 多次 SHA256
+// ==================== keystream ====================
+// 输入缓冲: master(32) || salt(16) || counter(8, big-endian)
+// 缓冲区布局必须与 Dart 端 encrypt_secrets.dart 完全一致!
 static void keystream(const uint8_t master[32], const uint8_t salt[16],
-                      size_t off, size_t n, uint8_t *out) {
-    uint8_t blk[32 + 16 + 8];
+                      uint8_t *out, size_t n) {
+    uint8_t blk[56];               // 32 + 16 + 8
     memcpy(blk, master, 32);
     memcpy(blk + 32, salt, 16);
-    for (int i = 7; i >= 0; i--) blk[40 + (7-i)] = (off >> (i*8)) & 0xff;
-
+    // NOTE: counter 写在 [48..55],绝不覆盖 salt!
     uint64_t cursor = 0;
     sha256_ctx c;
     uint8_t hash[32];
-    while (n > 0) {
-        for (int i = 7; i >= 0; i--) blk[40 + (7-i)] = (cursor >> (i*8)) & 0xff;
+    size_t off = 0;
+    while (off < n) {
+        for (int i = 7; i >= 0; i--) {
+            blk[48 + (7-i)] = (uint8_t)((cursor >> (i*8)) & 0xff);
+        }
         sha256_init(&c);
         sha256_update(&c, blk, sizeof(blk));
         sha256_final(&c, hash);
-        size_t take = n < 32 ? n : 32;
-        memcpy(out, hash, take);
-        out += take; n -= take; cursor++;
+        size_t take = (n - off) < 32 ? (n - off) : 32;
+        memcpy(out + off, hash, take);
+        off += take;
+        cursor++;
     }
 }
 
 // ==================== 状态 ====================
-static uint8_t  s_url[256] = {0};
-static uint8_t  s_key[256]  = {0};
+static uint8_t  s_url[512] = {0};
+static uint8_t  s_key[512] = {0};
 static size_t   s_url_len = 0;
-static size_t   s_key_len  = 0;
+static size_t   s_key_len = 0;
 static uint8_t  s_master[32] = {0};
+static int      s_master_set = 0;
 static int      s_initialized = 0;
-static int      s_tampered    = 0;
+static int      s_tampered = 0;
 static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
 static const uint8_t SEP[4] = {0xFF, 0xFE, 0xFD, 0xFC};
 
 // ==================== 反调试 / 反 root / 反模拟器 ====================
 static int is_debugger_attached() {
-    char buf[256];
+    char buf[512];
     int fd = open("/proc/self/status", O_RDONLY);
     if (fd < 0) return 0;
     ssize_t n = read(fd, buf, sizeof(buf) - 1);
@@ -187,12 +197,15 @@ static int is_emulator() {
         close(fd);
         if (n > 0) { buf[n] = 0; if (strstr(buf, "QEMU") || strstr(buf, "Goldfish")) return 1; }
     }
+    // build.prop 整行子串匹配太宽("sdk"/"=1" 任何位置都命中)→ 改为精确键值对检查
     FILE *f = fopen("/system/build.prop", "r");
     if (f) {
         char line[256];
         while (fgets(line, sizeof(line), f)) {
-            if (strstr(line, "ro.build.fingerprint") || strstr(line, "ro.product.model") || strstr(line, "ro.kernel.qemu")) {
-                if (strstr(line, "generic") || strstr(line, "google_sdk") || strstr(line, "Emulator") || strstr(line, "sdk") || strstr(line, "=1")) { fclose(f); return 1; }
+            // 仅匹配具体属性值,不做任意子串扫描
+            if (strstr(line, "ro.kernel.qemu=1") ||
+                strstr(line, "ro.build.characteristics=emulator")) {
+                fclose(f); return 1;
             }
         }
         fclose(f);
@@ -206,136 +219,148 @@ static int security_check() {
     return 1;
 }
 
-// ==================== master 处理 ====================
-static int s_master_set = 0;
-__attribute__((visibility("default")))
-int vault_set_master(const uint8_t *key, int len) {
-    if (!key || len != 32) return 0;
-    memcpy(s_master, key, 32);
-    s_master_set = 1;
-    return 1;
+// ==================== 8 位错误码(模块 30)====================
+// 返回约定:成功 >= 0;错误 = 负的 8 位码(如 -30000002)
+#define E_N01 (-30000001) // security check failed (tampered)
+#define E_N02 (-30000002) // master not set
+#define E_N03 (-30000003) // buffer too small
+#define E_N04 (-30000004) // parse failed (magic/length/separator)
+#define E_N09 (-30000009) // not initialized
+#define E_N10 (-30000010) // master length invalid
+#define E_N11 (-30000011) // trailer SHA256(master) mismatch
+
+// 计算 SHA256(master) 并填充 32 字节
+static void sha256_of_master(const uint8_t master[32], uint8_t out[32]) {
+    sha256_ctx c; sha256_init(&c); sha256_update(&c, master, 32); sha256_final(&c, out);
 }
 
-static int parse_vault(const uint8_t *data, size_t len) {
-    if (len < 4 + 16 + 4 + 32) return 0;
-    if (memcmp(data, "VLT1", 4) != 0) return 0;
+// ==================== 导出 API ====================
+// 成功返回 0;失败返回负的 8 位错误码
+__attribute__((visibility("default")))
+int vault_set_master(const uint8_t *key, int len) {
+    if (!key || len != 32) return E_N10;
+    pthread_mutex_lock(&s_lock);
+    memcpy(s_master, key, 32);
+    s_master_set = 1;
+    pthread_mutex_unlock(&s_lock);
+    return 0;
+}
+
+static int parse_vault_locked(const uint8_t *data, size_t len) {
+    if (len < 4 + 16 + 4 + 32) return E_N04;
+    if (memcmp(data, "VLT1", 4) != 0) return E_N04;
     const uint8_t *salt = data + 4;
-    const uint8_t *body  = data + 4 + 16;
-    size_t sep_off = 0;
-    int found = 0;
-    for (size_t i = 0; i + 4 <= len - 4 - 16 - 32; i++) {
-        if (memcmp(body + i, SEP, 4) == 0) { sep_off = i; found = 1; break; }
+    const uint8_t *body  = data + 20;
+    size_t body_len = len - 4 - 16 - 32;
+    if (body_len < 4 + 1 + 1) return E_N04; // 至少 sep + 1 + 1
+
+    // 校验 trailer: SHA256(master) — 检测 master 是否正确
+    uint8_t expected[32];
+    sha256_of_master(s_master, expected);
+    if (memcmp(data + len - 32, expected, 32) != 0) return E_N11;
+
+    // 找分隔符
+    size_t sep_off = (size_t)-1;
+    for (size_t i = 0; i + 4 <= body_len; i++) {
+        if (memcmp(body + i, SEP, 4) == 0) { sep_off = i; break; }
     }
-    if (!found) return 0;
+    if (sep_off == (size_t)-1) return E_N04;
     size_t url_ct_len = sep_off;
-    size_t key_ct_len = (len - 4 - 16 - 32) - 4 - sep_off;
-    if (url_ct_len == 0 || key_ct_len == 0) return 0;
-    if (url_ct_len >= sizeof(s_url) || key_ct_len >= sizeof(s_key)) return 0;
+    size_t key_ct_len = body_len - 4 - sep_off;
+    if (url_ct_len == 0 || key_ct_len == 0) return E_N04;
+    if (url_ct_len >= sizeof(s_url) || key_ct_len >= sizeof(s_key)) return E_N03;
 
     const uint8_t *url_ct = body;
     const uint8_t *key_ct = body + sep_off + 4;
 
-    // XOR 解密
-    keystream(s_master, salt, 0, url_ct_len, s_url);
+    // URL: XOR keystream(master, salt)
+    keystream(s_master, salt, s_url, url_ct_len);
     for (size_t i = 0; i < url_ct_len; i++) s_url[i] ^= url_ct[i];
     s_url_len = url_ct_len;
     s_url[url_ct_len] = 0;
 
+    // KEY: XOR keystream(master, salt2), salt2[0] ^= 0xA5
     uint8_t salt2[16]; memcpy(salt2, salt, 16); salt2[0] ^= 0xA5;
-    keystream(s_master, salt2, 0, key_ct_len, s_key);
+    keystream(s_master, salt2, s_key, key_ct_len);
     for (size_t i = 0; i < key_ct_len; i++) s_key[i] ^= key_ct[i];
     s_key_len = key_ct_len;
     s_key[key_ct_len] = 0;
-    return 1;
-}
 
-// ==================== 导出 API ====================
-// 8 位错误码格式:MM FF FF FF
-//   MM (2 位) — 模块
-//   FFFFFF (6 位) — 功能
-// 模块 30 = native
-//   0   成功
-//   1   未知 / unexpected
-//   100 + ErrCode 偏移
-
-// 模块 30 native — vault 错误码
-#define E_N00 30000000 // unexpected
-#define E_N01 30000001 // security check failed (tampered)
-#define E_N02 30000002 // master not set
-#define E_N03 30000003 // vault buffer too small
-#define E_N04 30000004 // parse failed: magic mismatch
-#define E_N05 30000005 // parse failed: separator not found
-#define E_N06 30000006 // parse failed: invalid length
-#define E_N07 30000007 // string buffer too small for endpoint
-#define E_N08 30000008 // string buffer too small for api key
-#define E_N09 30000009 // not initialized
-#define E_N10 30000010 // master key length invalid
-
-__attribute__((visibility("default")))
-int vault_set_master(const uint8_t *key, int len) {
-    if (!key || len != 32) return E_N10;
-    memcpy(s_master, key, 32);
-    s_master_set = 1;
-    LOGI("set_master OK");
-    LOG_HEX("master", s_master, 32);
+    // 明文合理性检查:URL 应以 http 开头
+    if (s_url_len < 4 ||
+        memcmp(s_url, "http", 4) != 0) return E_N04;
     return 0;
 }
 
 __attribute__((visibility("default")))
 int vault_init(const uint8_t *vault_bin, int vault_len) {
-    LOGI("vault_init: len=%d master_set=%d", vault_len, s_master_set);
-    LOG_HEX("vault_first16", vault_bin, vault_len < 16 ? vault_len : 16);
-    if (!s_master_set) return E_N02;
     pthread_mutex_lock(&s_lock);
+    // 重置状态(允许重新初始化)
+    s_tampered = 0;
+    s_initialized = 0;
+    memset(s_url, 0, sizeof(s_url));
+    memset(s_key, 0, sizeof(s_key));
+    s_url_len = s_key_len = 0;
+
+#if VAULT_HAS_EMBEDDED_MASTER
+    if (!s_master_set) {
+        decode_master(s_master);
+        s_master_set = 1;
+    }
+#endif
+
+    if (!s_master_set) {
+        pthread_mutex_unlock(&s_lock);
+        return E_N02;
+    }
+    if (!vault_bin || vault_len <= 0) {
+        pthread_mutex_unlock(&s_lock);
+        return E_N04;
+    }
     if (!security_check()) {
+        // 违规:返回假数据(不返回错误,避免暴露检测逻辑)
         s_tampered = 1;
         const char *fake_url = "http://invalid.local";
         const char *fake_key = "00000000";
         s_url_len = strlen(fake_url);
         s_key_len = strlen(fake_key);
-        memcpy(s_url, fake_url, s_url_len + 1);
-        memcpy(s_key, fake_key, s_key_len + 1);
+        memcpy(s_url, fake_url, s_url_len);
+        memcpy(s_key, fake_key, s_key_len);
+        s_initialized = 1;
         pthread_mutex_unlock(&s_lock);
-        LOGE("security_check FAILED (tampered/rooted)");
-        return E_N01;
+        return 0; // 假装成功
     }
-    int ok = parse_vault(vault_bin, vault_len);
-    s_initialized = ok;
+    int rc = parse_vault_locked(vault_bin, (size_t)vault_len);
+    if (rc == 0) s_initialized = 1;
     pthread_mutex_unlock(&s_lock);
-    if (ok) {
-        LOGI("parse_vault OK: url_len=%zu key_len=%zu", s_url_len, s_key_len);
-        LOG_HEX("url_plain", s_url, s_url_len);
-        LOG_HEX("key_plain", s_key, s_key_len);
-    } else {
-        LOGE("parse_vault FAILED");
-    }
-    return ok ? 0 : E_N04;
+    return rc;
 }
 
+// 成功:返回明文长度(>0);错误:返回负的 8 位码;未初始化:0
 __attribute__((visibility("default")))
 int vault_get_endpoint(char *out, int out_len) {
-    if (s_tampered) return E_N01;
     pthread_mutex_lock(&s_lock);
     if (!s_initialized) { pthread_mutex_unlock(&s_lock); return E_N09; }
     int n = (int)s_url_len;
-    if (n >= out_len) { pthread_mutex_unlock(&s_lock); return E_N07; }
+    if (n >= out_len) { pthread_mutex_unlock(&s_lock); return E_N03; }
     memcpy(out, s_url, n);
     out[n] = 0;
     pthread_mutex_unlock(&s_lock);
-    return n; // 成功:返回写入长度(>0)
+    return n;
 }
+
 __attribute__((visibility("default")))
 int vault_get_api_key(char *out, int out_len) {
-    if (s_tampered) return E_N01;
     pthread_mutex_lock(&s_lock);
     if (!s_initialized) { pthread_mutex_unlock(&s_lock); return E_N09; }
     int n = (int)s_key_len;
-    if (n >= out_len) { pthread_mutex_unlock(&s_lock); return E_N08; }
+    if (n >= out_len) { pthread_mutex_unlock(&s_lock); return E_N03; }
     memcpy(out, s_key, n);
     out[n] = 0;
     pthread_mutex_unlock(&s_lock);
     return n;
 }
+
 __attribute__((visibility("default")))
 void vault_wipe() {
     pthread_mutex_lock(&s_lock);
@@ -344,6 +369,8 @@ void vault_wipe() {
     memset(s_master, 0, 32);
     s_url_len = s_key_len = 0;
     s_initialized = 0;
+    s_master_set = 0;
+    s_tampered = 0;
     pthread_mutex_unlock(&s_lock);
 }
 

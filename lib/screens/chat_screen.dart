@@ -36,6 +36,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   List<Message> _messages = [];
   bool _busy = false;
+  bool _stopRequested = false;
   StreamBuffer? _buffer;
 
   /// 已附加的图片 / 文件,会在本轮发送时一起发出
@@ -47,7 +48,10 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _bootstrap();
+    // 推迟到首帧后,避免 initState 中访问 InheritedWidget(ConfigScope.of)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _bootstrap();
+    });
   }
 
   @override
@@ -80,6 +84,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final picker = ImagePicker();
       final picked = await picker.pickImage(source: ImageSource.gallery);
       if (picked == null) return;
+      if (!mounted) return;
       setState(() => _attachments.add(
           _Attachment.image(File(picked.path), picked.name)));
     } catch (e) {
@@ -97,6 +102,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (result == null || result.files.isEmpty) return;
       final f = result.files.first;
       if (f.path == null) return;
+      if (!mounted) return;
       setState(() => _attachments.add(
           _Attachment.file(File(f.path!), f.name)));
     } catch (e) {
@@ -117,6 +123,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty && _attachments.isEmpty) return;
     if (_service == null || _config == null) return;
 
+    // 立即(同步,任何 await 之前)置忙,防止重入
+    _busy = true;
+    _stopRequested = false;
+
     // 把附件信息拼到 user 消息里(OpenAI images:[text]/... 格式)
     if (_attachments.isNotEmpty) {
       final parts = StringBuffer();
@@ -131,69 +141,73 @@ class _ChatScreenState extends State<ChatScreen> {
       text = parts.toString().trim();
     }
 
-    final persisted = await AppDatabase.instance.insertMessage(Message(
-      chatId: widget.chat.id!,
-      role: MessageRole.user,
-      content: text,
-    ));
-
-    final baseHistory = await AppDatabase.instance
-        .listMessages(widget.chat.id!, includeCompressed: false);
-
     final buf = StreamBuffer(
       charsPerSecond: _resolveStreamSpeed(_config!.userPrefs),
       maxBuffer: _resolveBufferSize(_config!.userPrefs),
     );
     setState(() {
-      _messages = baseHistory;
       _busy = true;
       _buffer = buf;
       _input.clear();
       _attachments.clear();
     });
-    _scrollToEnd();
 
-    String? err;
     try {
+      final persisted = await AppDatabase.instance.insertMessage(Message(
+        chatId: widget.chat.id!,
+        role: MessageRole.user,
+        content: text,
+      ));
+
+      final baseHistory = await AppDatabase.instance
+          .listMessages(widget.chat.id!, includeCompressed: false);
+
+      if (!mounted) return;
+      setState(() => _messages = baseHistory);
+      _scrollToEnd();
+
       await for (final _ in _service!.sendStream(
         chat: widget.chat,
         history: _messages.where((m) => m.id != persisted).toList(),
         userText: text,
         alreadyPersistedUserText: true,
         buffer: buf,
-        onDelta: (_) {},
+        onDelta: (_) {
+          // 用户点了停止 → 后续 chunk 直接丢弃(不取消底层流)
+          if (_stopRequested) return;
+        },
       )) {
         // drain
       }
     } catch (e) {
-      err = e.toString();
+      if (mounted) showSnack(context, '错误: $e', error: true);
+    } finally {
+      final msgs = await AppDatabase.instance
+          .listMessages(widget.chat.id!, includeCompressed: false);
+      if (!mounted) return;
+      setState(() {
+        _messages = msgs;
+        _busy = false;
+        _buffer?.dispose();
+        _buffer = null;
+      });
+      _scrollToEnd();
     }
-
-    final msgs = await AppDatabase.instance
-        .listMessages(widget.chat.id!, includeCompressed: false);
-    if (!mounted) return;
-    setState(() {
-      _messages = msgs;
-      _busy = false;
-      _buffer?.dispose();
-      _buffer = null;
-    });
-    _scrollToEnd();
-    if (err != null) showSnack(context, '错误: $err', error: true);
   }
 
   /// 按 userPrefs 互斥规则计算 StreamBuffer 参数
+  /// bufferSize>0 → 纯缓冲模式(speed=0);否则 streamSpeed>0 → 限速模式(maxBuffer=0)
   double _resolveStreamSpeed(UserPrefs p) =>
       p.bufferSize > 0 ? 0.0 : p.streamSpeed.toDouble();
   int _resolveBufferSize(UserPrefs p) =>
       p.streamSpeed > 0 ? 0 : p.bufferSize;
+  // 互斥语义:两者都>0 时以 speed 为准(bufferSize 让位) — 上面的三元顺序即体现了该优先级
 
   Future<void> _stop() async {
-    setState(() {
-      _busy = false;
-      _buffer?.dispose();
-      _buffer = null;
-    });
+    // 仅翻转 UI 标志并置停止请求位;流本身由 _send 的 finally 收尾
+    _stopRequested = true;
+    if (!mounted) return;
+    setState(() => _busy = false);
     showSnack(context, '已停止');
   }
 

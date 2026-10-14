@@ -61,6 +61,9 @@ class ChatService {
   final PromptScheduler _scheduler;
   PromptScheduler get scheduler => _scheduler;
 
+  /// 每个聊天同一时刻只允许一次压缩,防止并发重入
+  final Set<int> _compressing = {};
+
   Stream<String> sendStream({
     required Chat chat,
     required List<Message> history,
@@ -78,6 +81,7 @@ class ChatService {
       await AppDatabase.instance.insertMessage(userMsg);
     }
 
+    // 调用方契约:history 不包含本轮 userText,由下方 prompt.add 单独追加
     final userTurns = history
             .where((m) =>
                 m.role == MessageRole.user || m.role == MessageRole.assistant)
@@ -98,36 +102,65 @@ class ChatService {
 
     final full = StringBuffer();
     final stream = _client.chatStream(prompt, firstTurn: isFirstTurn);
-    await for (final ev in stream) {
-      if (ev.done) break;
-      final d = ev.delta;
-      if (d != null && d.isNotEmpty) {
-        full.write(d);
-        buffer?.add(d);
-        onDelta(d);
+    try {
+      await for (final ev in stream) {
+        if (ev.done) break;
+        final d = ev.delta;
+        if (d != null && d.isNotEmpty) {
+          full.write(d);
+          buffer?.add(d);
+          onDelta(d);
+        }
       }
+
+      final assistant = Message(
+        chatId: chat.id!,
+        role: MessageRole.assistant,
+        content: full.toString(),
+      );
+      await AppDatabase.instance.insertMessage(assistant);
+      await AppDatabase.instance.touchChat(chat.id!);
+
+      unawaited(
+          maybeCompress(chatId: chat.id!).catchError((_) {}));
+
+      yield full.toString();
+    } catch (e) {
+      // 出错也要把已收到的部分落库,避免丢字
+      if (full.length > 0) {
+        try {
+          await AppDatabase.instance.insertMessage(Message(
+            chatId: chat.id!,
+            role: MessageRole.assistant,
+            content: full.toString(),
+          ));
+        } catch (_) {/* 落库失败则忽略 */}
+      }
+      rethrow;
+    } finally {
+      // flush 不应抛出(即使已 dispose)
+      await buffer?.flush();
     }
-    await buffer?.flush();
-
-    final assistant = Message(
-      chatId: chat.id!,
-      role: MessageRole.assistant,
-      content: full.toString(),
-    );
-    await AppDatabase.instance.insertMessage(assistant);
-    await AppDatabase.instance.touchChat(chat.id!);
-
-    unawaited(maybeCompress(chatId: chat.id!));
-
-    yield full.toString();
   }
 
   /// 后台压缩
   Future<void> maybeCompress({required int chatId}) async {
+    if (_compressing.contains(chatId)) return;
+    _compressing.add(chatId);
+    try {
+      await _maybeCompressLocked(chatId: chatId);
+    } finally {
+      _compressing.remove(chatId);
+    }
+  }
+
+  Future<void> _maybeCompressLocked({required int chatId}) async {
     final ctx = _config.context;
     final all =
         await AppDatabase.instance.listMessages(chatId, includeCompressed: true);
-    final live = all.where((m) => !m.compressed).toList();
+    final live = all
+        .where((m) => !m.compressed && m.role != MessageRole.compressed)
+        .toList();
     if (live.length < ctx.compressTriggerMessages) return;
 
     final headCount = live.length - ctx.keepRecentMessages;

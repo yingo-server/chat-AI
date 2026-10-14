@@ -8,53 +8,32 @@
 - **设置**:字号 / 颜色 (6 选 1) / 缓冲区大小 / 输出速度(后两项互斥)
 
 ## 开发者看到的 (`config.json`)
-- `endpoint` / `apiKey`:**以密文持久化**(XOR + base64,密钥随机生成存于 `.chat_ai_salt`)
-- `systemPrompts` / `recurringPrompts` / `context` 等全部结构
+- 仅含非敏感参数:`ai`(model / temperature / maxTokens 等非机密字段)、`systemPrompts` / `recurringPrompts` / `context` / `userPrefs`
+- `endpoint` / `apiKey` **不在 config.json 中**,由 native vault 保护
 
 ## 端点 / 密钥如何注入
-仓库中 `assets/config.example.json` 只放占位符。**真实值不在仓库内**,通过两种方式注入:
+真实值不在仓库内。CI 在构建时从 `VAULT_MASTER` secret 生成 `assets/vault.bin`(SHA-256 keystream XOR 加密)和 `android/app/src/main/cpp/vault_master.h`(混淆后的 master),两者均已列入 `.gitignore`,不会提交。
 
-### A) GitHub Actions Secrets(推荐,CI 用)
-在仓库 **Settings → Secrets and variables → Actions → New repository secret** 添加:
-- `API_ENDPOINT` = `https://server.344977.xyz:3001/v1`
-- `API_KEY` = `wbk_8a15b5d6367d990a0f520074a667de9fd392f531d5689978`
-- `API_MODEL` = `cn:deepseek-v4.1-flash`
-
-CI 会以 `--dart-define` 注入到编译产物。运行时不会出现在明文日志或文件中。
-
-### B) 本地构建
-```bash
-flutter build apk --release --obfuscate \
-  --split-debug-info=build/symbols \
-  --dart-define=API_ENDPOINT="..." \
-  --dart-define=API_KEY="..." \
-  --dart-define=API_MODEL="cn:deepseek-v4.1-flash"
-```
-
-应用首次启动时,内存中读到的 endpoint/apiKey 会被加密写入 `config.json`,之后不再需要 dart-define。
+运行时,`libvault.so` 用内嵌 master 解密 `vault.bin`,endpoint / apiKey 只存在于内存中的 `AiConfig`。
 
 ## 混淆 / 压缩措施
 1. **Flutter `--obfuscate --split-debug-info`** — 类名 / 方法名混淆,symbols 单独上传到 artifact
 2. **R8 + minify + shrinkResources** — 死代码删除,资源压缩
 3. **ProGuard 规则** — `android/app/proguard-rules.pro`:`-optimizationpasses 5` `-allowaccessmodification` `-overloadaggressively` `-repackageclasses ''`
-4. **SecretBox** — 端点 / 密钥运行时明文不入文件,以 XOR 密文存
+4. **Native vault** — 端点 / 密钥以 SHA-256 keystream XOR 密文存于 `vault.bin`,master 以混淆形式内嵌于 native 库;错误码为负数
 5. **`config.example.json`** 不含真实密钥,占位符空字符串
 
 ## 模型选择
-各模型 credits 比较(经 `https://server.344977.xyz:3001/v1/models` 抓取):
-- 选 fast:**GLM-5.3-Flash / Deepseek-V4.1-Flash / Hy3-X / Space-Bunny**
-- 默认:`cn:deepseek-v4.1-flash`(1M ctx, 393k 输出,x0.11 credit)
+默认模型:`cn:deepseek-v4-flash`(在 `AiConfig` 中统一配置;占位示例端点 `https://your-endpoint/v1`,密钥 `YOUR_API_KEY`)。
 
 ## 提示词轮询策略(开发者档)
-- 持久系统提示词(始终在第一条 system 消息)
-- 每 2~4 轮(user-assistant 对数计),在 user 消息前再注入一次持久 system 提示词 — 防止长对话遗忘约束;UI 不显示任何提示词标记
-- 上下文压缩:消息数 ≥ `compressTriggerMessages`(默认 80)就调 LLM 摘要早期对话
+- **持久系统提示词**:始终作为第一条 system 消息
+- **隐藏轮询注入**:每 2~4 轮(user-assistant 对数计),在 user 消息前再注入一次持久 system 提示词 — 防止长对话遗忘约束;UI 不显示任何提示词标记
+- **上下文压缩**:消息数 ≥ `compressTriggerMessages`(默认 80)就调 LLM 摘要早期对话
 
 ## 构建
 ```bash
 flutter pub get
-flutter build apk --release --obfuscate --split-debug-info=build/symbols \
-  --dart-define=API_ENDPOINT=... \
-  --dart-define=API_KEY=... \
-  --dart-define=API_MODEL=cn:deepseek-v4.1-flash
+flutter build apk --release --obfuscate --split-debug-info=build/symbols
 ```
+(vault.bin / vault_master.h 由 CI 从 `VAULT_MASTER` secret 生成,本地构建需自行生成这两个文件。)

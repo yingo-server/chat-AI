@@ -72,9 +72,12 @@ class Message {
   factory Message.fromMap(Map<String, dynamic> m) => Message(
         id: m['id'] as int?,
         chatId: m['chat_id'] as int,
-        role: MessageRole.values.firstWhere((r) => r.name == m['role']),
+        role: MessageRole.values.firstWhere((r) => r.name == m['role'],
+            orElse: () => MessageRole.assistant),
         content: m['content'] as String,
-        createdAt: DateTime.fromMillisecondsSinceEpoch(m['created_at'] as int),
+        createdAt: DateTime.fromMillisecondsSinceEpoch(
+            (m['created_at'] as num?)?.toInt() ??
+                DateTime.now().millisecondsSinceEpoch),
         tokenCount: m['token_count'] as int?,
         compressed: (m['compressed'] as int? ?? 0) == 1,
       );
@@ -133,8 +136,12 @@ class Chat {
   factory Chat.fromMap(Map<String, dynamic> m) => Chat(
         id: m['id'] as int?,
         title: m['title'] as String,
-        createdAt: DateTime.fromMillisecondsSinceEpoch(m['created_at'] as int),
-        updatedAt: DateTime.fromMillisecondsSinceEpoch(m['updated_at'] as int),
+        createdAt: DateTime.fromMillisecondsSinceEpoch(
+            (m['created_at'] as num?)?.toInt() ??
+                DateTime.now().millisecondsSinceEpoch),
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(
+            (m['updated_at'] as num?)?.toInt() ??
+                DateTime.now().millisecondsSinceEpoch),
         systemPromptId: m['system_prompt_id'] as String? ?? 'default',
         extraSystemPrompt: m['extra_system_prompt'] as String?,
       );
