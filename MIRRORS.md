@@ -1,16 +1,29 @@
-# 镜像(仅本地使用)
+# 附录 A —— 构建期镜像加速规范
 
-> CI runner(GitHub Actions 等)有直连,不需要走代理。本节只描述**本地构建**时的加速。
+文档版本 1.0 · 状态：参考性（Informative）
 
-## 本地
-- 运行 `./setup-mirrors.sh` 一键设置:
-  - `PUB_HOSTED_URL=https://proxy.344977.xyz/pub.dev`
-  - `FLUTTER_STORAGE_BASE_URL=https://proxy.344977.xyz/flutter_infra_release`
-  - Gradle init.gradle 走 `https://maven.proxy.344977.xyz/dl/android/maven2/...`
+---
 
-## 镜像映射规则
-- `https://pub.dev/...`  → `https://proxy.344977.xyz/pub.dev/...`
-- `https://storage.googleapis.com/flutter_infra_release/...` → `https://proxy.344977.xyz/flutter_infra_release/...`
-- `https://dl.google.com/dl/android/maven2/...` → `https://maven.proxy.344977.xyz/dl/android/maven2/...`
+## A.1 适用范围
 
-> 仓库本身**不包含任何敏感凭据**。API key、token、密码都不要提交。
+本附录规定在受限网络环境下构建本应用时，依赖获取环节的镜像加速配置。
+
+须予明确者：托管构建环境（如 GitHub Actions 执行器）具备直连能力，**不适用**本附录；本附录仅面向本地构建场景。将镜像地址引入流水线配置，将导致依赖解析失败。
+
+---
+
+## A.2 镜像映射规则
+
+镜像服务将原始地址映射至代理地址，其对应关系为：`pub.dev` 之内容映射至代理前缀下的同名路径；Flutter 发布存储（`storage.googleapis.com/flutter_infra_release`）之内容映射至代理前缀下的 `flutter_infra_release` 路径；Android Maven 仓库（`dl.google.com/dl/android/maven2`）之内容映射至 Maven 代理主机下的 `dl/android/maven2` 路径。
+
+---
+
+## A.3 配置方式
+
+执行仓库根目录下的 `setup-mirrors.sh` 脚本即可完成配置。该脚本将设置三项环境变量，即发布源地址、Flutter 存储基址与 Flutter 源码仓库地址，分别指向对应的代理前缀；同时写入 Gradle 初始化脚本，使构件的仓库解析经由镜像主机完成。
+
+---
+
+## A.4 合规要求
+
+本仓库不应包含任何服务凭据、访问密钥或口令。构建产物所需的凭据注入应于流水线内部完成，不得落盘至版本库。镜像地址仅用于依赖获取，其可用性与稳定性由使用者自行验证。
