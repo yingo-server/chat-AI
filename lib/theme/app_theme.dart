@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'motion.dart';
 import 'spacing.dart';
 
 /// M3 主题 — 单一 seed 派生 + 组件级规范补齐
@@ -29,6 +30,12 @@ class AppTheme {
 
     return base.copyWith(
       scaffoldBackgroundColor: s.surface,
+
+      // M3 页面转场:淡入 + 轻微上移(emphasized)
+      pageTransitionsTheme: const PageTransitionsTheme(builders: {
+        TargetPlatform.android: EmphasizedPageTransitions(),
+        TargetPlatform.iOS: EmphasizedPageTransitions(),
+      }),
 
       // M3 顶部应用栏:surface 底色、无阴影、scroll-under 时不着色
       appBarTheme: AppBarTheme(

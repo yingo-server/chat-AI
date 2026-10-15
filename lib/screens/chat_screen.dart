@@ -12,6 +12,7 @@ import '../models/app_config.dart';
 import '../models/chat.dart';
 import '../services/chat_service.dart';
 import '../theme/app_theme.dart';
+import '../theme/motion.dart';
 import '../theme/spacing.dart';
 import '../utils/dialogs.dart';
 import '../utils/vault.dart';
@@ -39,6 +40,9 @@ class _ChatScreenState extends State<ChatScreen> {
   List<Message> _messages = [];
   bool _busy = false;
   bool _stopRequested = false;
+
+  /// 是否已停在列表底部(用于显示"回到最新"按钮)
+  bool _atBottom = true;
   StreamBuffer? _buffer;
 
   /// 已附加的图片 / 文件,会在本轮发送时一起发出
@@ -50,10 +54,18 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _scroll.addListener(_onScroll);
     // 推迟到首帧后,避免 initState 中访问 InheritedWidget(ConfigScope.of)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _bootstrap();
     });
+  }
+
+  void _onScroll() {
+    if (!_scroll.hasClients) return;
+    final at = _scroll.position.pixels >=
+        _scroll.position.maxScrollExtent - Gap.huge;
+    if (at != _atBottom) setState(() => _atBottom = at);
   }
 
   @override
@@ -67,7 +79,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _bootstrap() async {
     final scope = ConfigScope.of(context);
-    final cfg = await scope.store.load();
+    await scope.ready; // 等待首帧后的保险库/配置初始化
+    final cfg = scope.controller.config;
     final svc = ChatService(cfg);
     final msgs = await AppDatabase.instance
         .listMessages(widget.chat.id!, includeCompressed: false);
@@ -217,8 +230,7 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
       _scroll.animateTo(_scroll.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut);
+          duration: Motion.medium2, curve: Motion.emphasizedDecelerate);
     });
   }
 
@@ -264,14 +276,19 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           Expanded(
-            child: ListView.builder(
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ListView.builder(
               controller: _scroll,
               padding: const EdgeInsets.fromLTRB(
                   Gap.lg, Gap.md, Gap.lg, Gap.sm),
               itemCount: _messages.length + (_busy ? 1 : 0),
               itemBuilder: (_, i) {
                 if (i < _messages.length) {
-                  return chat.MessageBubble(message: _messages[i]);
+                  final bubble = chat.MessageBubble(message: _messages[i]);
+                  final isNewest = i == _messages.length - 1 && !_busy;
+                  return isNewest ? MotionEntrance(child: bubble) : bubble;
                 }
                 return ValueListenableBuilder<String>(
                   key: const ValueKey('streaming'),
@@ -280,6 +297,24 @@ class _ChatScreenState extends State<ChatScreen> {
                   builder: (_, text, __) => StreamingBubble(text: text),
                 );
               },
+            ),
+                // M3:FAB 用于"回到最新",仅在离开底部时出现
+                Positioned(
+                  right: Gap.lg,
+                  bottom: Gap.lg,
+                  child: AnimatedScale(
+                    scale: _atBottom ? 0 : 1,
+                    duration: Motion.short4,
+                    curve: Motion.emphasizedDecelerate,
+                    child: FloatingActionButton.small(
+                      heroTag: 'jumpToLatest',
+                      tooltip: '回到最新',
+                      onPressed: _scrollToEnd,
+                      child: const Icon(Icons.arrow_downward),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           if (_attachments.isNotEmpty)
@@ -358,7 +393,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   const SizedBox(width: Gap.sm),
                   AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 150),
+                    duration: Motion.short4,
+                    switchInCurve: Motion.emphasizedDecelerate,
+                    switchOutCurve: Motion.emphasizedAccelerate,
                     child: _busy
                         ? FilledButton.tonalIcon(
                             key: const ValueKey('stop'),

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 启动画面背景色:与图标底色同族,消除白屏跳变 -->
+<resources>
+    <color name="splash_bg">#EDF1F7</color>
+</resources>
