@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../../models/chat.dart';
 import '../../theme/spacing.dart';
-import 'markdown_renderer.dart';
 
 /// 单条消息气泡
-/// 用户消息按纯文本渲染(输入即所见);助手消息按 Markdown 渲染。
+/// 用户消息按纯文本渲染(输入即所见);助手消息用 flutter_markdown 渲染。
 class MessageBubble extends StatelessWidget {
   final Message message;
   const MessageBubble({super.key, required this.message});
@@ -51,7 +51,6 @@ class MessageBubble extends StatelessWidget {
           child: InkWell(
             onLongPress: () => _copy(context),
             child: Padding(
-              // 用户气泡水平略收(14),短消息更紧凑;助手保持 16
               padding: isUser ? Insets.bubbleUser : Insets.bubble,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -66,15 +65,42 @@ class MessageBubble extends StatelessWidget {
                       ),
                     )
                   else
-                    MarkdownText(
-                      message.content,
-                      textStyle: theme.textTheme.bodyLarge
-                          ?.copyWith(color: fg, height: 1.5),
+                    MarkdownBody(
+                      data: message.content,
+                      selectable: true,
+                      styleSheet:
+                          MarkdownStyleSheet.fromTheme(theme).copyWith(
+                        p: theme.textTheme.bodyLarge
+                            ?.copyWith(color: fg, height: 1.5),
+                        code: theme.textTheme.bodyMedium?.copyWith(
+                          fontFamily: 'monospace',
+                          backgroundColor: s.surfaceContainerHighest,
+                          color: s.onSurface,
+                        ),
+                        codeblockDecoration: BoxDecoration(
+                          color: s.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: s.outlineVariant),
+                        ),
+                        codeblockPadding:
+                            const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                        blockquoteDecoration: BoxDecoration(
+                          border: Border(
+                              left: BorderSide(color: s.primary, width: 3)),
+                        ),
+                        h1: theme.textTheme.headlineSmall
+                            ?.copyWith(color: s.onSurface),
+                        h2: theme.textTheme.titleLarge
+                            ?.copyWith(color: s.onSurface),
+                        h3: theme.textTheme.titleMedium
+                            ?.copyWith(color: s.onSurface),
+                        listBullet: theme.textTheme.bodyLarge
+                            ?.copyWith(color: fg),
+                        tableBorder: TableBorder.all(color: s.outlineVariant),
+                        tableHead: theme.textTheme.bodyMedium
+                            ?.copyWith(fontWeight: FontWeight.w600),
+                      ),
                     ),
-                  // 元信息行:时间戳 + 复制按钮。
-                  // - 与正文之间 8dp;
-                  // - 用 48dp 触达区(InkWell)包住 24dp 视觉图标,兼顾 M3 无障碍;
-                  // - 负 margin 抵消多出的 12dp,使视觉重心仍与正文左缘对齐。
                   const SizedBox(height: Gap.sm),
                   Row(
                     mainAxisSize: MainAxisSize.min,
