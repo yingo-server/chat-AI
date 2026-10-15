@@ -19,6 +19,8 @@ int vault_get_endpoint(char *out, int outLen);
 int vault_get_api_key(char *out, int outLen);
 int vault_set_master(const unsigned char *key, int len);
 void vault_wipe();
+int vault_debug_state(char *out, int outLen);
+void vault_debug_sha256(const unsigned char *in, int len, unsigned char *out);
 }
 
 static std::vector<unsigned char> readFile(const char *path) {
@@ -66,7 +68,6 @@ int main(int argc, char **argv) {
 
     {
         char st[256] = {0};
-        extern int vault_debug_state(char *, int);
         int sn = vault_debug_state(st, sizeof(st));
         printf("vault_debug_state()   : %d -> %s\n", sn, st);
     }
@@ -85,6 +86,25 @@ int main(int argc, char **argv) {
     if (k <= 0 || strcmp(buf, expectKey) != 0) {
         printf("  !! expected key '%s'\n", expectKey);
         failures++;
+    }
+
+    // ---- Step 1b: SHA-256 known-answer tests ----
+    {
+        struct { const char *label; const char *in; const char *expect; } vec[] = {
+            {"sha256("")",    "",    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+            {"sha256(abc)",   "abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+            {"sha256(448bit)","abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+                                    "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"},
+        };
+        for (auto &v : vec) {
+            unsigned char o[32]; char hex[65];
+            vault_debug_sha256((const unsigned char *)v.in, (int)strlen(v.in), o);
+            for (int i = 0; i < 32; i++) sprintf(hex + i * 2, "%02x", o[i]);
+            hex[64] = 0;
+            bool ok = strcmp(hex, v.expect) == 0;
+            printf("KAT %-14s: %s\n", v.label, ok ? "OK" : "MISMATCH");
+            if (!ok) { printf("   got %s\n   exp %s\n", hex, v.expect); failures++; }
+        }
     }
 
     // ---- Step 2: tamper detection (flip one ciphertext byte) ----

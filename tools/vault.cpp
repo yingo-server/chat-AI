@@ -80,7 +80,10 @@ static void sha256_transform(sha256_ctx *c, const uint8_t *d) {
         uint32_t S0 = ROR32(a,2) ^ ROR32(a,13) ^ ROR32(a,22);
         uint32_t mj = (a & b) ^ (a & c2) ^ (b & c2);
         t2 = S0 + mj;
-        h=g; g=f; e=d2+t1; d2=c2; c2=b; b=a; a=t1+t2;
+        // 标准轮转:h=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+        // 原实现漏掉了 f=e,导致 f 永不更新 → SHA256 全错
+        uint32_t e_new = d2 + t1;
+        h=g; g=f; f=e; e=e_new; d2=c2; c2=b; b=a; a=t1+t2;
     }
     c->state[0]+=a; c->state[1]+=b; c->state[2]+=c2; c->state[3]+=d2;
     c->state[4]+=e; c->state[5]+=f; c->state[6]+=g; c->state[7]+=h;
@@ -254,9 +257,15 @@ static int parse_vault_locked(const uint8_t *data, size_t len) {
     size_t body_len = len - 4 - 16 - 32;
     if (body_len < 4 + 1 + 1) return E_N04; // 至少 sep + 1 + 1
 
-    // 校验 trailer: SHA256(master) — 检测 master 是否正确
+    // 校验 trailer: SHA256(master || salt || 密文) — 同时验证 master 正确性与内容完整性
     uint8_t expected[32];
-    sha256_of_master(s_master, expected);
+    {
+        sha256_ctx c;
+        sha256_init(&c);
+        sha256_update(&c, s_master, 32);
+        sha256_update(&c, data, len - 32);   // 含 "VLT1" 魔数,与 Dart 端 bin 范围一致
+        sha256_final(&c, expected);
+    }
     if (memcmp(data + len - 32, expected, 32) != 0) return E_N11;
 
     // 找分隔符
@@ -334,6 +343,12 @@ int vault_init(const uint8_t *vault_bin, int vault_len) {
     }
     pthread_mutex_unlock(&s_lock);
     return rc;
+}
+
+// 诊断:计算 SHA256(用于主机自测校验手写实现)
+__attribute__((visibility("default")))
+void vault_debug_sha256(const uint8_t *in, int len, uint8_t out[32]) {
+    sha256_ctx c; sha256_init(&c); sha256_update(&c, in, (size_t)len); sha256_final(&c, out);
 }
 
 // 诊断导出:返回写入长度。用于主机自测 / logcat 排查。

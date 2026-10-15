@@ -69,7 +69,8 @@ void encryptAndWrite({
     ..add(keyCt);
   final bin = body.toBytes();
 
-  final digest = sha256.convert(master).bytes;
+  // trailer = SHA256(master || salt || url_ct || SEP || key_ct) —— 与 vault.cpp 一致
+  final digest = sha256.convert(<int>[...master, ...bin]).bytes;
 
   final outBytes = Uint8List.fromList([...bin, ...digest]);
   try {
