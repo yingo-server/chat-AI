@@ -1,18 +1,23 @@
 import 'package:flutter/material.dart';
 
-/// 简单的 Snackbar 封装
+/// 对话框 / 提示条 — 统一走 M3 语义色与组件
+/// (Snackbar / Dialog 的视觉规范已在 AppTheme 里集中定义)
+
 void showSnack(BuildContext ctx, String msg, {bool error = false}) {
-  ScaffoldMessenger.of(ctx).showSnackBar(
-    SnackBar(
-      content: Text(msg),
-      behavior: SnackBarBehavior.floating,
-      backgroundColor:
-          error ? Theme.of(ctx).colorScheme.errorContainer : null,
-    ),
-  );
+  final s = Theme.of(ctx).colorScheme;
+  ScaffoldMessenger.maybeOf(ctx)
+    ?..removeCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        content: Text(
+          msg,
+          style: error ? TextStyle(color: s.onErrorContainer) : null,
+        ),
+        backgroundColor: error ? s.errorContainer : null,
+      ),
+    );
 }
 
-/// 自定义 confirm 对话框(避免依赖原生 confirm 在 Web 不可用)
 Future<bool> confirmDialog(
   BuildContext ctx, {
   required String title,
@@ -21,6 +26,7 @@ Future<bool> confirmDialog(
   String cancelLabel = '取消',
   bool destructive = false,
 }) async {
+  final s = Theme.of(ctx).colorScheme;
   final result = await showDialog<bool>(
     context: ctx,
     builder: (dialogCtx) => AlertDialog(
@@ -34,8 +40,8 @@ Future<bool> confirmDialog(
         FilledButton(
           style: destructive
               ? FilledButton.styleFrom(
-                  backgroundColor: Colors.red.shade400,
-                  foregroundColor: Colors.white,
+                  backgroundColor: s.error,
+                  foregroundColor: s.onError,
                 )
               : null,
           onPressed: () => Navigator.pop(dialogCtx, true),
@@ -54,6 +60,7 @@ Future<String?> inputDialog(
   String initialValue = '',
 }) {
   final ctrl = TextEditingController(text: initialValue);
+  void submit(BuildContext c) => Navigator.pop(c, ctrl.text.trim());
   return showDialog<String>(
     context: ctx,
     builder: (dialogCtx) => AlertDialog(
@@ -61,6 +68,8 @@ Future<String?> inputDialog(
       content: TextField(
         controller: ctrl,
         autofocus: true,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => submit(dialogCtx),
         decoration: InputDecoration(hintText: hint),
       ),
       actions: [
@@ -69,10 +78,10 @@ Future<String?> inputDialog(
           child: const Text('取消'),
         ),
         FilledButton(
-          onPressed: () => Navigator.pop(dialogCtx, ctrl.text.trim()),
+          onPressed: () => submit(dialogCtx),
           child: const Text('确定'),
         ),
       ],
     ),
-  );
+  ).whenComplete(ctrl.dispose);
 }

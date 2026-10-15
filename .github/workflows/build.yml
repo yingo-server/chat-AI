@@ -102,8 +102,8 @@ jobs:
           cp tools/gradle.properties android/gradle.properties
           cp tools/proguard-rules.pro android/app/proguard-rules.pro
           mkdir -p android/app/src/main/res
-          cp -r tools/res/drawable android/app/src/main/res/
-          cp -r tools/res/mipmap-anydpi-v26 android/app/src/main/res/
+          # 整套资源:自适应图标(anydpi-v26)+ 各密度 PNG(旧启动器回退)
+          cp -r tools/res/. android/app/src/main/res/
           cp tools/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           mkdir -p android/app/src/main/cpp
           cp tools/vault.cpp android/app/src/main/cpp/vault.cpp
@@ -239,8 +239,8 @@ jobs:
           cp tools/gradle.properties android/gradle.properties
           cp tools/proguard-rules.pro android/app/proguard-rules.pro
           mkdir -p android/app/src/main/res
-          cp -r tools/res/drawable android/app/src/main/res/
-          cp -r tools/res/mipmap-anydpi-v26 android/app/src/main/res/
+          # 整套资源:自适应图标(anydpi-v26)+ 各密度 PNG(旧启动器回退)
+          cp -r tools/res/. android/app/src/main/res/
           cp tools/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           mkdir -p android/app/src/main/cpp
           cp tools/vault.cpp android/app/src/main/cpp/vault.cpp
@@ -376,8 +376,8 @@ jobs:
           cp tools/gradle.properties android/gradle.properties
           cp tools/proguard-rules.pro android/app/proguard-rules.pro
           mkdir -p android/app/src/main/res
-          cp -r tools/res/drawable android/app/src/main/res/
-          cp -r tools/res/mipmap-anydpi-v26 android/app/src/main/res/
+          # 整套资源:自适应图标(anydpi-v26)+ 各密度 PNG(旧启动器回退)
+          cp -r tools/res/. android/app/src/main/res/
           cp tools/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           mkdir -p android/app/src/main/cpp
           cp tools/vault.cpp android/app/src/main/cpp/vault.cpp

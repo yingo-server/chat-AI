@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -10,19 +9,28 @@ import 'utils/vault.dart' as vault;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await SystemChrome.setPreferredOrientations(
-      [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
+  try {
+    await SystemChrome.setPreferredOrientations(
+        [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
+  } catch (_) {/* 桌面/测试环境忽略 */}
 
-  // 1) 启动 native vault(加载 assets/vault.bin;master 内嵌于 native 库)
-  final r = await vault.Vault.init();
-  if (r != 0) debugPrint('vault init: $r');
-  // 即便 vault init 失败也继续(返回空 endpoint/key,UI 由 isValid 弹出 请检查配置)
+  // 1) 初始化原生保险库(master 已混淆嵌入 libvault.so)
+  final rc = await vault.Vault.init();
+  if (rc != 0) {
+    debugPrint('[vault] init failed: $rc');
+  }
 
-  // 2) 加载 config.json(只含 prefs/context/prompts)
+  // 2) 读取本地配置(不含端点/密钥)
   final store = ConfigStore();
-  final cfg = await store.load();
+  AppConfig cfg;
+  try {
+    cfg = await store.load();
+  } catch (e) {
+    debugPrint('[config] load failed: $e');
+    cfg = AppConfig.empty();
+  }
 
-  // 3) 把 vault 端点/密钥塞入 AiConfig
+  // 3) 端点/密钥来自原生保险库
   final config = AppConfig(
     ai: AiConfig.fromVault(),
     context: cfg.context,
@@ -48,6 +56,9 @@ class AIChatApp extends StatefulWidget {
 }
 
 class _AIChatAppState extends State<AIChatApp> {
+  /// 默认字号(与 UserPrefs.defaults.fontSize 保持一致)
+  static const _baseFontSize = 15.0;
+
   late final ConfigController _controller;
 
   @override
@@ -81,20 +92,16 @@ class _AIChatAppState extends State<AIChatApp> {
             darkTheme: AppTheme.dark(seed),
             home: const HomeScreen(),
             builder: (ctx, child) {
-              final t = Theme.of(ctx);
-              final fs = _controller.config.userPrefs.fontSize.toDouble();
-              return Theme(
-                data: t.copyWith(
-                  textTheme: t.textTheme.copyWith(
-                    bodyMedium:
-                        t.textTheme.bodyMedium?.copyWith(fontSize: fs),
-                    bodySmall:
-                        t.textTheme.bodySmall?.copyWith(fontSize: fs - 1),
-                    titleSmall:
-                        t.textTheme.titleSmall?.copyWith(fontSize: fs + 1),
-                    titleMedium:
-                        t.textTheme.titleMedium?.copyWith(fontSize: fs + 2),
-                  ),
+              // 全局字号:用户偏好 × 系统字体缩放。
+              // 这样所有文本(标题/正文/按钮/标签)按同一比例缩放,
+              // 符合 M3「统一字级」原则,而不是只改某几个 textStyle。
+              final mq = MediaQuery.of(ctx);
+              final factor =
+                  _controller.config.userPrefs.fontSize / _baseFontSize;
+              final systemScale = mq.textScaler.scale(1.0);
+              return MediaQuery(
+                data: mq.copyWith(
+                  textScaler: TextScaler.linear(systemScale * factor),
                 ),
                 child: child!,
               );
@@ -118,8 +125,7 @@ class ConfigScope extends InheritedWidget {
   });
 
   static ConfigScope of(BuildContext context) {
-    final scope =
-        context.dependOnInheritedWidgetOfExactType<ConfigScope>();
+    final scope = context.dependOnInheritedWidgetOfExactType<ConfigScope>();
     assert(scope != null, 'ConfigScope missing');
     return scope!;
   }

@@ -12,6 +12,7 @@ import '../models/app_config.dart';
 import '../models/chat.dart';
 import '../services/chat_service.dart';
 import '../theme/app_theme.dart';
+import '../theme/spacing.dart';
 import '../utils/dialogs.dart';
 import '../utils/vault.dart';
 import '../widgets/chat/message_bubble.dart' as chat;
@@ -237,7 +238,7 @@ class _ChatScreenState extends State<ChatScreen> {
         title: Text(widget.chat.title, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
-            tooltip: '导出 Markdown',
+            tooltip: '导出文本',
             icon: const Icon(Icons.ios_share),
             onPressed: _export,
           ),
@@ -246,20 +247,27 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(
         children: [
           if (!hasConfig)
-            MaterialBanner(
-              backgroundColor: scheme.errorContainer,
-              leading: Icon(Icons.warning_amber_rounded,
-                  color: scheme.onErrorContainer),
-              content: Text('配置加载失败 (code: ${Vault.lastError})',
-                  style: TextStyle(color: scheme.onErrorContainer)),
-              actions: const [SizedBox.shrink()],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(Gap.lg, Gap.md, Gap.lg, 0),
+              child: Card(
+                color: scheme.errorContainer,
+                margin: EdgeInsets.zero,
+                child: ListTile(
+                  leading: Icon(Icons.error_outline,
+                      color: scheme.onErrorContainer),
+                  title: Text('配置加载失败',
+                      style: TextStyle(color: scheme.onErrorContainer)),
+                  subtitle: Text('错误码 ${Vault.lastError}',
+                      style: TextStyle(
+                          color: scheme.onErrorContainer.withOpacity(0.8))),
+                ),
+              ),
             ),
           Expanded(
             child: ListView.builder(
-              key: ValueKey(_messages.length),
               controller: _scroll,
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 12),
+              padding: const EdgeInsets.fromLTRB(
+                  Gap.lg, Gap.md, Gap.lg, Gap.sm),
               itemCount: _messages.length + (_busy ? 1 : 0),
               itemBuilder: (_, i) {
                 if (i < _messages.length) {
@@ -279,8 +287,8 @@ class _ChatScreenState extends State<ChatScreen> {
               padding: const EdgeInsets.symmetric(
                   horizontal: 12, vertical: 8),
               child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
+                spacing: Gap.sm,
+                runSpacing: Gap.sm,
                 children: [
                   for (final a in _attachments)
                     InputChip(
@@ -296,8 +304,7 @@ class _ChatScreenState extends State<ChatScreen> {
           SafeArea(
             top: false,
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 8, vertical: 8),
+              padding: Insets.composer,
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -318,15 +325,38 @@ class _ChatScreenState extends State<ChatScreen> {
                       minLines: 1,
                       maxLines: 5,
                       enabled: !_busy,
-                      style: TextStyle(fontSize: prefs.fontSize.toDouble()),
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyLarge
+                          ?.copyWith(fontSize: prefs.fontSize.toDouble()),
+                      textInputAction: TextInputAction.newline,
                       decoration: InputDecoration(
                         hintText: '输入消息…',
                         isDense: true,
+                        fillColor: scheme.surfaceContainerHighest,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 18, vertical: 12),
+                        border: const OutlineInputBorder(
+                          borderRadius:
+                              BorderRadius.all(Radius.circular(28)),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: const OutlineInputBorder(
+                          borderRadius:
+                              BorderRadius.all(Radius.circular(28)),
+                          borderSide: BorderSide.none,
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius:
+                              const BorderRadius.all(Radius.circular(28)),
+                          borderSide:
+                              BorderSide(color: scheme.primary, width: 2),
+                        ),
                       ),
                       onSubmitted: (_) => _send(),
                     ),
                   ),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: Gap.sm),
                   AnimatedSwitcher(
                     duration: const Duration(milliseconds: 150),
                     child: _busy

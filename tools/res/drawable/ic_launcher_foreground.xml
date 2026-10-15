@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  莫奈鸢尾花图标 - 灰白镂空风
-  适配 Material 3 / Android 12+ adaptive icon
-  - 前景:镂空鸢尾剪影(白色)
-  - 背景:深紫灰渐变(莫奈色系)
-  - 4 角菱形装饰点
+  前景:镂空线描鸢尾(莫奈题材)
+  - 纯线条 + 少量实心点缀 → "镂空"观感
+  - 墨色 #46506B(比淡灰背景明显更深,对比度足够)
+  - 图形收在 66dp 安全区内(108 视口中心)
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -12,89 +11,72 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-  <!-- 背景:深紫灰渐变(莫奈鸢尾色调) -->
-  <path android:pathData="M0,0h108v108h-108z">
-    <aapt:attr name="android:fillColor" xmlns:aapt="http://schemas.android.com/aapt">
-      <gradient
-          android:type="linear"
-          android:startX="0" android:startY="0"
-          android:endX="108" android:endY="108"
-          android:startColor="#3D3450"
-          android:endColor="#1F1B2E"/>
-    </aapt:attr>
-  </path>
+  <!-- 花茎 -->
+  <path
+      android:strokeColor="#46506B"
+      android:strokeWidth="2.6"
+      android:strokeLineCap="round"
+      android:fillColor="#00000000"
+      android:pathData="M54,74 C53,66 54,58 54,50"/>
 
-  <!-- 4 角菱形装饰点 -->
-  <path android:fillColor="#9A92AD"
-        android:pathData="M14,14 l3,-3 l3,3 l-3,3 z"/>
-  <path android:fillColor="#9A92AD"
-        android:pathData="M88,14 l3,-3 l3,3 l-3,3 z"/>
-  <path android:fillColor="#9A92AD"
-        android:pathData="M14,91 l3,-3 l3,3 l-3,3 z"/>
-  <path android:fillColor="#9A92AD"
-        android:pathData="M88,91 l3,-3 l3,3 l-3,3 z"/>
+  <!-- 左侧叶(线描,内空) -->
+  <path
+      android:strokeColor="#46506B"
+      android:strokeWidth="2.2"
+      android:strokeLineCap="round"
+      android:fillColor="#00000000"
+      android:pathData="M54,66 C46,64 40,58 38,50 C46,52 52,58 54,66 Z"/>
 
-  <!-- 主鸢尾花(中心) - 镂空风格 -->
-  <group android:translateX="54" android:translateY="56"
-         android:scaleX="0.95" android:scaleY="0.95">
+  <!-- 右侧叶 -->
+  <path
+      android:strokeColor="#46506B"
+      android:strokeWidth="2.2"
+      android:strokeLineCap="round"
+      android:fillColor="#00000000"
+      android:pathData="M54,70 C62,68 68,62 70,54 C62,56 56,62 54,70 Z"/>
 
-    <!-- 左花瓣(向外伸展) -->
-    <path android:fillColor="#E8E4F0"
-          android:pathData="M-2,8
-                            C-12,2 -22,-6 -28,-14
-                            C-26,-8 -22,-2 -18,4
-                            C-14,8 -8,10 -2,8 Z"/>
+  <!-- 花瓣:上方三片(线描,中空) -->
+  <path
+      android:strokeColor="#46506B"
+      android:strokeWidth="2.4"
+      android:strokeLineCap="round"
+      android:fillColor="#00000000"
+      android:pathData="M54,48 C49,40 48,30 54,24 C60,30 59,40 54,48 Z"/>
 
-    <!-- 右花瓣(向上扬) -->
-    <path android:fillColor="#E8E4F0"
-          android:pathData="M2,-12
-                            C-2,-22 4,-30 8,-34
-                            C10,-28 8,-20 6,-14
-                            C4,-12 2,-12 2,-12 Z"/>
+  <path
+      android:strokeColor="#46506B"
+      android:strokeWidth="2.2"
+      android:strokeLineCap="round"
+      android:fillColor="#00000000"
+      android:pathData="M52,50 C44,46 38,38 38,30 C46,32 52,40 52,50 Z"/>
 
-    <!-- 中心花瓣(直立) -->
-    <path android:fillColor="#E8E4F0"
-          android:pathData="M-3,-18
-                            C-3,-24 0,-30 4,-30
-                            C8,-30 9,-22 6,-16
-                            C3,-12 0,-14 -3,-18 Z"/>
+  <path
+      android:strokeColor="#46506B"
+      android:strokeWidth="2.2"
+      android:strokeLineCap="round"
+      android:fillColor="#00000000"
+      android:pathData="M56,50 C64,46 70,38 70,30 C62,32 56,40 56,50 Z"/>
 
-    <!-- 底部花茎(向下延伸) -->
-    <path android:fillColor="#D4CFE0"
-          android:strokeColor="#D4CFE0"
-          android:strokeWidth="1.5"
-          android:pathData="M0,8 L-1,28"/>
+  <!-- 下方垂瓣 -->
+  <path
+      android:strokeColor="#46506B"
+      android:strokeWidth="2.2"
+      android:strokeLineCap="round"
+      android:fillColor="#00000000"
+      android:pathData="M54,50 C50,56 44,60 40,60 C42,54 48,50 54,50 Z"/>
 
-    <!-- 右侧小卷须 -->
-    <path android:fillColor="#D4CFE0"
-          android:pathData="M8,-2
-                            C12,2 14,8 12,12
-                            C10,10 9,6 8,-2 Z"/>
+  <!-- 花心:实心点(唯一实心元素,做视觉锚点) -->
+  <path
+      android:fillColor="#46506B"
+      android:pathData="M54,42 m-2.6,0 a2.6,2.6 0 1,0 5.2,0 a2.6,2.6 0 1,0 -5.2,0"/>
 
-    <!-- 左侧小卷须 -->
-    <path android:fillColor="#D4CFE0"
-          android:pathData="M-8,4
-                            C-14,8 -16,14 -14,18
-                            C-12,14 -10,10 -8,4 Z"/>
-
-  </group>
-
-  <!-- 整体镂空效果:用半透明白色细线条勾勒 -->
-  <group android:translateX="54" android:translateY="56"
-         android:scaleX="0.95" android:scaleY="0.95">
-    <path android:strokeColor="#FFFFFF"
-          android:strokeWidth="0.5"
-          android:fillColor="#00000000"
-          android:pathData="M-2,8
-                            C-12,2 -22,-6 -28,-14
-                            C-26,-8 -22,-2 -18,4
-                            C-14,8 -8,10 -2,8"/>
-    <path android:strokeColor="#FFFFFF"
-          android:strokeWidth="0.5"
-          android:fillColor="#00000000"
-          android:pathData="M2,-12
-                            C-2,-22 4,-30 8,-34
-                            C10,-28 8,-20 6,-14"/>
-  </group>
-
+  <!-- 角落装饰菱形(与图标语言呼应) -->
+  <path android:fillColor="#8C97AE"
+        android:pathData="M22,22 l2.4,-2.4 l2.4,2.4 l-2.4,2.4 z"/>
+  <path android:fillColor="#8C97AE"
+        android:pathData="M81,22 l2.4,-2.4 l2.4,2.4 l-2.4,2.4 z"/>
+  <path android:fillColor="#8C97AE"
+        android:pathData="M22,81 l2.4,-2.4 l2.4,2.4 l-2.4,2.4 z"/>
+  <path android:fillColor="#8C97AE"
+        android:pathData="M81,81 l2.4,-2.4 l2.4,2.4 l-2.4,2.4 z"/>
 </vector>
