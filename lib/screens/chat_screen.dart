@@ -13,6 +13,7 @@ import '../models/chat.dart';
 import '../services/chat_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/dialogs.dart';
+import '../utils/vault.dart';
 import '../widgets/chat/message_bubble.dart' as chat;
 import '../widgets/chat/streaming_bubble.dart';
 import '../widgets/export_sheet.dart';
@@ -249,7 +250,7 @@ class _ChatScreenState extends State<ChatScreen> {
               backgroundColor: scheme.errorContainer,
               leading: Icon(Icons.warning_amber_rounded,
                   color: scheme.onErrorContainer),
-              content: Text('请检查配置',
+              content: Text('配置加载失败 (code: ${Vault.lastError})',
                   style: TextStyle(color: scheme.onErrorContainer)),
               actions: const [SizedBox.shrink()],
             ),

@@ -318,22 +318,39 @@ int vault_init(const uint8_t *vault_bin, int vault_len) {
         return E_N04;
     }
     if (!security_check()) {
-        // 违规:返回假数据(不返回错误,避免暴露检测逻辑)
+        // NOTE: 检测到 root/调试器/模拟器时【绝不】替换真实凭据 —— 那会让正常用户
+        // 拿到 "http://invalid.local" 从而显示"请检查配置"。仅记录日志,继续正常初始化。
         s_tampered = 1;
-        const char *fake_url = "http://invalid.local";
-        const char *fake_key = "00000000";
-        s_url_len = strlen(fake_url);
-        s_key_len = strlen(fake_key);
-        memcpy(s_url, fake_url, s_url_len);
-        memcpy(s_key, fake_key, s_key_len);
-        s_initialized = 1;
-        pthread_mutex_unlock(&s_lock);
-        return 0; // 假装成功
+        LOGE("[vault] security_check flagged (root/debugger/emulator) - continuing with REAL data");
+    } else {
+        LOGI("[vault] security_check passed");
     }
     int rc = parse_vault_locked(vault_bin, (size_t)vault_len);
-    if (rc == 0) s_initialized = 1;
+    if (rc == 0) {
+        s_initialized = 1;
+        LOGI("[vault] parse OK url_len=%zu key_len=%zu", s_url_len, s_key_len);
+    } else {
+        LOGE("[vault] parse FAILED rc=%d", rc);
+    }
     pthread_mutex_unlock(&s_lock);
     return rc;
+}
+
+// 诊断导出:返回写入长度。用于主机自测 / logcat 排查。
+__attribute__((visibility("default")))
+int vault_debug_state(char *out, int out_len) {
+    char tmp[256];
+    int sec = 0;
+    sec = security_check() ? 1 : 0;
+    int n = snprintf(tmp, sizeof(tmp),
+                     "master_set=%d initialized=%d tampered=%d seccheck=%d url_len=%d key_len=%d",
+                     s_master_set, s_initialized, s_tampered, sec,
+                     (int)s_url_len, (int)s_key_len);
+    if (n < 0) return -1;
+    if (n >= out_len) n = out_len - 1;
+    memcpy(out, tmp, (size_t)n);
+    out[n] = 0;
+    return n;
 }
 
 // 成功:返回明文长度(>0);错误:返回负的 8 位码;未初始化:0

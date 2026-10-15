@@ -11,6 +11,9 @@ class Vault {
   static bool _initialized = false;
   static bool get initialized => _initialized;
 
+  /// 最近一次 init 的返回码(0=成功;负值=8 位错误码)
+  static int lastError = 0;
+
   /// 初始化:加载 assets/vault.bin 交给 native 层(master 已内嵌于 native 库)
   static Future<int> init() async {
     if (_initialized) return 0;
@@ -19,13 +22,15 @@ class Vault {
     try {
       bin = await rootBundle.load('assets/vault.bin');
     } catch (_) {
-      return -12000005; // asset 加载失败
+      lastError = -12000005; // asset 加载失败
+      return lastError;
     }
     final vaultBin = Uint8List.fromList(
         bin.buffer.asUint8List(bin.offsetInBytes, bin.lengthInBytes));
 
     final r = VaultFfi.init(vaultBin);
     _initialized = (r == 0);
+    lastError = r;
     return r;
   }
 

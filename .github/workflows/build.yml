@@ -53,6 +53,21 @@ jobs:
           fi
           echo "vault.bin OK (no plaintext)"
 
+
+      - name: Vault host self-test (runs the REAL C++ chain, live logs)
+        env:
+          VAULT_MASTER: ${{ secrets.VAULT_MASTER }}
+          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
+          API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          set -x
+          python3 tools/gen_master_header.py --master="$VAULT_MASTER" --out=tools/vault_master.h
+          g++ --version | head -1
+          g++ -std=c++17 -I tools/android_shim -I tools -O0 -g \
+              -o /tmp/vault_host_test tools/vault_host_test.cpp tools/vault.cpp
+          /tmp/vault_host_test --vault=assets/vault.bin \
+              --expect-endpoint="$API_ENDPOINT" --expect-key="$API_KEY"
+
       - name: Upload vault.bin artifact
         uses: actions/upload-artifact@v4
         with:
@@ -106,6 +121,20 @@ jobs:
       - name: Verify vault.bin exists
         run: |
           test -s assets/vault.bin || (echo "::error::vault.bin missing"; exit 1)
+
+      - name: Vault host self-test (runs the REAL C++ chain, live logs)
+        env:
+          VAULT_MASTER: ${{ secrets.VAULT_MASTER }}
+          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
+          API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          set -x
+          python3 tools/gen_master_header.py --master="$VAULT_MASTER" --out=tools/vault_master.h
+          g++ --version | head -1
+          g++ -std=c++17 -I tools/android_shim -I tools -O0 -g \
+              -o /tmp/vault_host_test tools/vault_host_test.cpp tools/vault.cpp
+          /tmp/vault_host_test --vault=assets/vault.bin \
+              --expect-endpoint="$API_ENDPOINT" --expect-key="$API_KEY"
           ls -lh assets/vault.bin
 
       - name: Setup release signing + master header
@@ -229,6 +258,20 @@ jobs:
       - name: Verify vault.bin exists
         run: |
           test -s assets/vault.bin || (echo "::error::vault.bin missing"; exit 1)
+
+      - name: Vault host self-test (runs the REAL C++ chain, live logs)
+        env:
+          VAULT_MASTER: ${{ secrets.VAULT_MASTER }}
+          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
+          API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          set -x
+          python3 tools/gen_master_header.py --master="$VAULT_MASTER" --out=tools/vault_master.h
+          g++ --version | head -1
+          g++ -std=c++17 -I tools/android_shim -I tools -O0 -g \
+              -o /tmp/vault_host_test tools/vault_host_test.cpp tools/vault.cpp
+          /tmp/vault_host_test --vault=assets/vault.bin \
+              --expect-endpoint="$API_ENDPOINT" --expect-key="$API_KEY"
           ls -lh assets/vault.bin
 
       - name: Setup release signing + master header
@@ -352,6 +395,20 @@ jobs:
       - name: Verify vault.bin exists
         run: |
           test -s assets/vault.bin || (echo "::error::vault.bin missing"; exit 1)
+
+      - name: Vault host self-test (runs the REAL C++ chain, live logs)
+        env:
+          VAULT_MASTER: ${{ secrets.VAULT_MASTER }}
+          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
+          API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          set -x
+          python3 tools/gen_master_header.py --master="$VAULT_MASTER" --out=tools/vault_master.h
+          g++ --version | head -1
+          g++ -std=c++17 -I tools/android_shim -I tools -O0 -g \
+              -o /tmp/vault_host_test tools/vault_host_test.cpp tools/vault.cpp
+          /tmp/vault_host_test --vault=assets/vault.bin \
+              --expect-endpoint="$API_ENDPOINT" --expect-key="$API_KEY"
           ls -lh assets/vault.bin
 
       - name: Setup release signing + master header
