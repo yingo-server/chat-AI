@@ -25,6 +25,20 @@ class LlmStreamClient {
   final AiConfig config;
   LlmStreamClient(this.config);
 
+  /// OpenAI 兼容接口的完整 URL:
+  /// 端点可能是 base(如 http://host:3000/v1)也可能是完整路径,
+  /// 这里统一补全为 .../chat/completions,避免 POST 到 base 得到 404。
+  Uri _chatCompletionsUri() {
+    var ep = config.endpoint.trim();
+    while (ep.endsWith('/')) {
+      ep = ep.substring(0, ep.length - 1);
+    }
+    if (!ep.endsWith('/chat/completions')) {
+      ep = '$ep/chat/completions';
+    }
+    return Uri.parse(ep);
+  }
+
   /// 流式调用。每次拿到增量文本时调用 [onDelta]。
   /// [firstTurn]=true 时,使用 [AiConfig.firstTurnReasoning];否则 [AiConfig.subsequentReasoning]。
   Stream<LlmEvent> chatStream(
@@ -57,7 +71,7 @@ class LlmStreamClient {
 
     Future<void> run() async {
       try {
-        final req = http.Request('POST', Uri.parse(config.endpoint))
+        final req = http.Request('POST', _chatCompletionsUri())
           ..headers.addAll({
             'Content-Type': 'application/json',
             'Authorization': 'Bearer ${config.apiKey}',
@@ -152,7 +166,7 @@ class LlmStreamClient {
     }
     final resp = await http
         .post(
-          Uri.parse(config.endpoint),
+          _chatCompletionsUri(),
           headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer ${config.apiKey}',
