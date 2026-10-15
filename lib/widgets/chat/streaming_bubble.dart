@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 
-import '../animation/message_animations.dart';
 import '../../theme/spacing.dart';
+import '../animation/message_animations.dart';
+import 'markdown_renderer.dart';
 
 /// 流式输出中的助手气泡。
-/// 与 MessageBubble 保持完全一致的形状/配色,避免流结束时"跳变";
-/// 光标内联在文本末尾(WidgetSpan),换行时不会跑到最右侧。
+/// 与 MessageBubble 共用形状与配色,避免流结束时跳变。
+/// 输出期间以纯文本渲染(每帧成本最低);结束后切换为 Markdown 渲染。
 class StreamingBubble extends StatelessWidget {
   final String text;
   final bool finished;
@@ -22,7 +23,7 @@ class StreamingBubble extends StatelessWidget {
     const r4 = Radius.circular(4);
 
     return Semantics(
-      liveRegion: true, // 无障碍:读屏播报流式内容
+      liveRegion: true,
       label: 'AI 正在回复',
       child: Align(
         alignment: Alignment.centerLeft,
@@ -46,23 +47,32 @@ class StreamingBubble extends StatelessWidget {
             child: Padding(
               padding: Insets.bubble,
               child: SelectionArea(
-                child: Text.rich(
-                  TextSpan(
-                    children: [
-                      TextSpan(text: text.isEmpty ? '' : text),
-                      if (!finished)
-                        WidgetSpan(
-                          alignment: PlaceholderAlignment.middle,
-                          child: Padding(
-                            padding: const EdgeInsets.only(left: Gap.xs),
-                            child: BlinkingCursor(color: s.primary),
-                          ),
+                child: finished
+                    // 流式结束:完整 Markdown 渲染(代码块/列表/表格等)
+                    ? MarkdownText(
+                        text,
+                        textStyle: theme.textTheme.bodyLarge
+                            ?.copyWith(color: s.onSurface, height: 1.5),
+                      )
+                    // 输出中:纯文本 + 行内光标(避免每帧重建整棵语法树)
+                    : Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(
+                              text: text,
+                              style: theme.textTheme.bodyLarge
+                                  ?.copyWith(color: s.onSurface, height: 1.5),
+                            ),
+                            WidgetSpan(
+                              alignment: PlaceholderAlignment.middle,
+                              child: Padding(
+                                padding: const EdgeInsets.only(left: Gap.xs),
+                                child: BlinkingCursor(color: s.primary),
+                              ),
+                            ),
+                          ],
                         ),
-                    ],
-                  ),
-                  style: theme.textTheme.bodyLarge
-                      ?.copyWith(color: s.onSurface, height: 1.5),
-                ),
+                      ),
               ),
             ),
           ),

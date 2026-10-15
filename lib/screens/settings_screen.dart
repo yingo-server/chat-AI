@@ -3,10 +3,13 @@ import 'package:flutter/material.dart';
 import '../models/app_config.dart';
 import '../theme/spacing.dart';
 
-/// 设置页 — 用户可见的全部"配置":
-/// 字号 / 颜色 / 缓冲区大小 / 输出速度(后两项互斥)。
-/// 交互规范:M3 —— 可点击目标 ≥48dp、选中态有明确指示 + 语义标注、
-/// 数值用 labelLarge 呈现,分区用 surface container 卡片。
+/// 设置页 —— 用户可见的全部"配置"仅两项:
+///   1. 字号
+///   2. 主题色
+///   3. 输出速度(5–100 字/秒)
+///
+/// 流式输出缓冲上限固定为 100 字,由应用内部控制以抵抗网络抖动,
+/// 不提供用户调节入口。
 class SettingsScreen extends StatefulWidget {
   final ConfigController controller;
   const SettingsScreen({super.key, required this.controller});
@@ -32,6 +35,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final s = theme.colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
@@ -60,11 +64,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     Text('A', style: theme.textTheme.headlineSmall),
                   ],
                 ),
-                Text('${_prefs.fontSize} sp', style: theme.textTheme.labelLarge),
+                Text('${_prefs.fontSize} sp',
+                    style: theme.textTheme.labelLarge),
               ],
             ),
           ),
-          const SizedBox(height: Gap.lg),
+          const SizedBox(height: Gap.md),
           _Section(
             icon: Icons.palette_outlined,
             title: '颜色',
@@ -81,74 +86,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ),
-          const SizedBox(height: Gap.lg),
-          _Section(
-            icon: Icons.layers_outlined,
-            title: '缓冲区大小',
-            subtitle: '缓冲模式:攒够这么多字再一次性显示',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Slider(
-                  min: 0,
-                  max: 200,
-                  divisions: 20,
-                  label: _prefs.bufferSize == 0
-                      ? '关闭'
-                      : '${_prefs.bufferSize} 字',
-                  value: _prefs.bufferSize.toDouble().clamp(0, 200),
-                  onChanged: (v) {
-                    final n = v.round();
-                    _update(n == 0
-                        ? _prefs.copyWith(bufferSize: 0)
-                        // 互斥:动缓冲 → 速度归零
-                        : _prefs.copyWith(bufferSize: n, streamSpeed: 0));
-                  },
-                ),
-                Text(
-                  _prefs.bufferSize == 0 ? '关闭' : '${_prefs.bufferSize} 字',
-                  style: theme.textTheme.labelLarge,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: Gap.lg),
+          const SizedBox(height: Gap.md),
           _Section(
             icon: Icons.speed_outlined,
             title: '输出速度',
-            subtitle: '限速模式:每秒最多显示这么多字',
+            subtitle: '每秒最多显示的字数,用于平滑流式输出',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Slider(
-                  min: 0,
-                  max: 120,
-                  divisions: 30,
-                  label: _prefs.streamSpeed == 0
-                      ? '关闭'
-                      : '${_prefs.streamSpeed} 字/秒',
-                  value: _prefs.streamSpeed.toDouble().clamp(0, 120),
-                  onChanged: (v) {
-                    final n = v.round();
-                    _update(n == 0
-                        ? _prefs.copyWith(streamSpeed: 0)
-                        // 互斥:动速度 → 缓冲归零
-                        : _prefs.copyWith(streamSpeed: n, bufferSize: 0));
-                  },
+                  min: 5,
+                  max: 100,
+                  divisions: 19,
+                  label: '${_prefs.streamSpeed} 字/秒',
+                  value: _prefs.streamSpeed.clamp(5, 100).toDouble(),
+                  onChanged: (v) =>
+                      _update(_prefs.copyWith(streamSpeed: v.round())),
                 ),
                 Text(
-                  _prefs.streamSpeed == 0 ? '关闭' : '${_prefs.streamSpeed} 字/秒',
+                  '${_prefs.streamSpeed} 字/秒',
                   style: theme.textTheme.labelLarge,
                 ),
+                const SizedBox(height: Gap.sm),
+                Row(
+                  children: [
+                    Icon(Icons.info_outline,
+                        size: 14, color: s.onSurfaceVariant),
+                    const SizedBox(width: Gap.xs),
+                    Expanded(
+                      child: Text(
+                        '缓冲上限固定 100 字,用于吸收网络抖动,不可调整',
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: s.onSurfaceVariant),
+                      ),
+                    ),
+                  ],
+                ),
               ],
-            ),
-          ),
-          const SizedBox(height: Gap.xl),
-          Center(
-            child: Text(
-              '缓冲区与输出速度互斥,同时只有一个生效',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
           ),
         ],
@@ -157,7 +131,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
-/// 颜色选项 — 48dp 可点击区域 + 选中勾选 + 语义标注
+/// 颜色选项 —— 48dp 可点击区域 + 选中勾选 + 语义标注
 class _ColorSwatch extends StatelessWidget {
   final Color color;
   final bool selected;
@@ -180,8 +154,8 @@ class _ColorSwatch extends StatelessWidget {
         onTap: onTap,
         customBorder: const CircleBorder(),
         child: SizedBox(
-          width: 48,
-          height: 48,
+          width: Gap.minTouchTarget,
+          height: Gap.minTouchTarget,
           child: Center(
             child: Container(
               width: 40,
@@ -198,7 +172,6 @@ class _ColorSwatch extends StatelessWidget {
                   ? Icon(
                       Icons.check,
                       size: 20,
-                      // 依据背景亮度选前景色,保证对比度
                       color: ThemeData.estimateBrightnessForColor(color) ==
                               Brightness.dark
                           ? Colors.white
@@ -252,7 +225,7 @@ class _Section extends StatelessWidget {
                     ?.copyWith(color: s.onSurfaceVariant),
               ),
             ],
-            const SizedBox(height: Gap.lg),
+            const SizedBox(height: Gap.md),
             child,
           ],
         ),

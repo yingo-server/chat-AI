@@ -3,19 +3,16 @@ import 'package:flutter/services.dart';
 
 import '../../models/chat.dart';
 import '../../theme/spacing.dart';
+import 'markdown_renderer.dart';
 
-/// 单条消息气泡 — 严格按 M3:
-/// - 角色 → 色彩角色(user: primaryContainer / assistant: surfaceContainerHighest)
-/// - 形状刻度:large(16) + 尾部 extra-small(4)
-/// - Card 必须裁剪,否则 InkWell 波纹会溢出圆角
-/// - 时间戳使用 bodySmall + onSurfaceVariant(可读性达标),并做本地时区/跨日处理
+/// 单条消息气泡
+/// 用户消息按纯文本渲染(输入即所见);助手消息按 Markdown 渲染。
 class MessageBubble extends StatelessWidget {
   final Message message;
   const MessageBubble({super.key, required this.message});
 
   @override
   Widget build(BuildContext context) {
-    // 非对话消息(系统/压缩摘要)不出现在气泡列表里
     if (message.role != MessageRole.user &&
         message.role != MessageRole.assistant) {
       return const SizedBox.shrink();
@@ -52,7 +49,6 @@ class MessageBubble extends StatelessWidget {
             ),
           ),
           child: InkWell(
-            // M3:长按 → 复制(与系统上下文菜单习惯一致)
             onLongPress: () => _copy(context),
             child: Padding(
               padding: Insets.bubble,
@@ -60,13 +56,21 @@ class MessageBubble extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  SelectionArea(
-                    child: Text(
-                      message.content.isEmpty ? ' ' : message.content,
-                      style: theme.textTheme.bodyLarge
+                  if (isUser)
+                    SelectionArea(
+                      child: Text(
+                        message.content.isEmpty ? ' ' : message.content,
+                        style: theme.textTheme.bodyLarge
+                            ?.copyWith(color: fg, height: 1.5),
+                      ),
+                    )
+                  else
+                    MarkdownText(
+                      message.content,
+                      // 助手消息继承气泡文字色
+                      textStyle: theme.textTheme.bodyLarge
                           ?.copyWith(color: fg, height: 1.5),
                     ),
-                  ),
                   const SizedBox(height: Gap.xs),
                   Row(
                     mainAxisSize: MainAxisSize.min,
@@ -108,14 +112,14 @@ class MessageBubble extends StatelessWidget {
       ..showSnackBar(const SnackBar(content: Text('已复制')));
   }
 
-  /// 本地时区;今天只显示时间,跨日补日期,避免歧义
   String _formatTime(DateTime t) {
     final local = t.toLocal();
     final now = DateTime.now();
     final hh = local.hour.toString().padLeft(2, '0');
     final mm = local.minute.toString().padLeft(2, '0');
-    final sameDay =
-        local.year == now.year && local.month == now.month && local.day == now.day;
+    final sameDay = local.year == now.year &&
+        local.month == now.month &&
+        local.day == now.day;
     if (sameDay) return '$hh:$mm';
     final md = '${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
     return '$md $hh:$mm';

@@ -1,105 +1,100 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 
-/// 流式节流缓冲器 — 两种互斥模式(构造后不可变):
-/// - 缓冲模式: [charsPerSecond]==0 && [maxBuffer]>0 → 累积,长度 ≥ maxBuffer 时一次性放出
-/// - 限速模式: [charsPerSecond]>0 && [maxBuffer]==0 → 每 [tickInterval] 用小数累加器
-///   按速率释放(支持 4-120 cps 的低速率)
-/// - 两者皆为 0 → 直接透传
+/// 流式输出节流缓冲器(合并:限速 + 上限 100 字抗抖动)
+///
+/// - **限速**(可调,默认 24 字/秒):以固定速率把已累积字符推给监听者
+/// - **上限 100 字**(内部固定,不可配):缓冲超过此值立即清空(防内存膨胀、削减首帧延迟)
+/// - 边界:
+///   - 上游单次 `add()` 已被节流到不超过上限;
+///
+/// 用法:上游 SSE 拿到 delta 立即 `add`,UI 通过 `displayed` 实时读取
+/// `displayed` 为 `ValueListenable<String>`,新增监听后立即收到当前值。
 class StreamBuffer {
+  /// 固定缓冲上限(100 字):吸收网络抖动,防止首帧延迟与内存膨胀。
+  /// 由应用内部控制,不向用户暴露。
+  static const int fixedMaxBuffer = 100;
+
   StreamBuffer({
     this.charsPerSecond = 24,
-    this.maxBuffer = 50,
-    this.tickInterval = const Duration(milliseconds: 40),
-  })  : assert(!(charsPerSecond > 0 && maxBuffer > 0),
-            'charsPerSecond 与 maxBuffer 互斥,只能有一个 > 0'),
-        _displayed = ValueNotifier<String>('') {
-    if (charsPerSecond > 0) {
-      _timer = Timer.periodic(tickInterval, (_) => _tick());
-    }
-  }
+    Duration tickInterval = const Duration(milliseconds: 40),
+    this.maxBuffer = 100,
+  })  : _displayed = ValueNotifier<String>(''),
+        _tickInterval = tickInterval;
 
+  /// 内部固定上限,UI 不可改
+  final int maxBuffer;
+  final Duration _tickInterval;
+  final double charsPerSecond;
   final ValueNotifier<String> _displayed;
   ValueListenable<String> get displayed => _displayed;
-  String get value => _displayed.value;
 
-  Timer? _timer;
   final StringBuffer _buffer = StringBuffer();
-
-  final double charsPerSecond;
-  final int maxBuffer;
-  final Duration tickInterval;
-  bool _disposed = false;
-
-  /// 小数累加器:低速率(如 4cps * 0.04s = 0.16 字/tick)也能累积后整字放出
   double _carry = 0.0;
-
-  bool get _isSpeedMode => charsPerSecond > 0 && maxBuffer == 0;
-  bool get _isBufferMode => charsPerSecond == 0 && maxBuffer > 0;
+  Timer? _timer;
+  bool _disposed = false;
 
   void add(String chunk) {
     if (_disposed || chunk.isEmpty) return;
-
-    // 透传模式
-    if (!_isSpeedMode && !_isBufferMode) {
-      _emit(chunk);
+    final over = _buffer.length + chunk.length - maxBuffer;
+    if (over >= 0) {
+      // 上限策略:先按限速整批推送,剩余以限速释放(保留"平滑"观感)
+      // —— 一次性 flush 仍按 charsPerSecond 节流(传入 flush 触发节流链)
+      // 这里简化为"立即发送"以保证抖动抗性优先
+      _displayed.value = _displayed.value + _buffer.toString() + chunk;
+      _buffer.clear();
+      _carry = 0.0;
       return;
     }
-
     _buffer.write(chunk);
-
-    // 仅缓冲模式做阈值泄洪;限速模式(maxBuffer==0)由 tick 节奏控制
-    if (_isBufferMode && _buffer.length >= maxBuffer) {
-      _emit(_buffer.toString());
-      _buffer.clear();
-    }
+    _start();
   }
 
-  Future<void> flush() async {
-    if (_disposed) return;
-    if (_buffer.isEmpty) return;
-    _emit(_buffer.toString());
-    _buffer.clear();
-  }
-
-  void _emit(String s) {
-    _displayed.value = _displayed.value + s;
+  void _start() {
+    if (_timer != null) return;
+    _timer = Timer.periodic(_tickInterval, (_) => _tick());
   }
 
   void _tick() {
-    if (_disposed || _buffer.isEmpty) return;
-    final secondsPerTick = tickInterval.inMilliseconds / 1000.0;
-    // 本 tick 应释放的字符数(含上次余数)
-    final want = charsPerSecond * secondsPerTick + _carry;
-    var n = want.floor();
-    _carry = want - n;
-    // 钳制到实际缓冲长度,防止越界;钳掉的量计入 carry
-    if (n > _buffer.length) {
-      _carry = 0.0;
-      n = _buffer.length;
+    if (_disposed) return;
+    if (charsPerSecond <= 0) return;
+    final want = charsPerSecond * (_tickInterval.inMilliseconds / 1000.0) + _carry;
+    final n = want.clamp(1, maxBuffer).toInt();
+    if (_buffer.length == 0) {
+      // 没有缓冲,关闭定时器,显著降低 CPU
+      _timer?.cancel();
+      _timer = null;
+      return;
     }
-    if (n <= 0) return;
-    final s = _buffer.toString();
-    _emit(s.substring(0, n));
-    _buffer
-      ..clear()
-      ..write(s.substring(n));
+    if (_buffer.length <= n) {
+      _displayed.value = _displayed.value + _buffer.toString();
+      _buffer.clear();
+      _carry = 0.0;
+      _timer?.cancel();
+      _timer = null;
+    } else {
+      final s = _buffer.toString();
+      _displayed.value = _displayed.value + s.substring(0, n);
+      _buffer
+        ..clear()
+        ..write(s.substring(n));
+      _carry = want - n;
+    }
   }
 
-  void reset() {
+  /// 流结束:冲刷剩余
+  Future<void> flush() async {
     if (_disposed) return;
+    if (_buffer.isEmpty) return;
+    _displayed.value = _displayed.value + _buffer.toString();
     _buffer.clear();
     _carry = 0.0;
-    _displayed.value = '';
+    _timer?.cancel();
+    _timer = null;
   }
 
   void dispose() {
     if (_disposed) return;
-    // 先把未放出的内容冲出去,再取消定时器、销毁 notifier
-    if (_buffer.isNotEmpty) {
-      _displayed.value = _displayed.value + _buffer.toString();
-      _buffer.clear();
-    }
     _disposed = true;
     _timer?.cancel();
     _timer = null;

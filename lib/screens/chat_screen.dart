@@ -43,6 +43,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// 是否已停在列表底部(用于显示"回到最新"按钮)
   bool _atBottom = true;
+
+  /// 自动下拉阈值:距底部小于该像素值即视为在底部(参考 Telegram/微信的 120px 量级)
+  static const double _autoScrollThreshold = 120;
   StreamBuffer? _buffer;
 
   /// 已附加的图片 / 文件,会在本轮发送时一起发出
@@ -63,10 +66,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _onScroll() {
     if (!_scroll.hasClients) return;
+    // 阈值:距底部 120px 以内视为"在底部"(参考主流聊天应用的经验阈值)
     final at = _scroll.position.pixels >=
-        _scroll.position.maxScrollExtent - Gap.huge;
+        _scroll.position.maxScrollExtent - _autoScrollThreshold;
     if (at != _atBottom) setState(() => _atBottom = at);
   }
+
+  /// 是否应跟随新内容:用户停在底部时才自动下拉
+  bool get _shouldAutoScroll => _atBottom;
 
   @override
   void dispose() {
@@ -156,9 +163,10 @@ class _ChatScreenState extends State<ChatScreen> {
       text = parts.toString().trim();
     }
 
+    // 输出速度(用户可调)+ 固定 100 字缓冲上限(内部抗抖动)
     final buf = StreamBuffer(
-      charsPerSecond: _resolveStreamSpeed(_config!.userPrefs),
-      maxBuffer: _resolveBufferSize(_config!.userPrefs),
+      charsPerSecond: _config!.userPrefs.streamSpeed.toDouble(),
+      maxBuffer: StreamBuffer.fixedMaxBuffer,
     );
     setState(() {
       _busy = true;
@@ -179,7 +187,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
       if (!mounted) return;
       setState(() => _messages = baseHistory);
-      _scrollToEnd();
+      if (_shouldAutoScroll) _scrollToEnd();
 
       await for (final _ in _service!.sendStream(
         chat: widget.chat,
@@ -210,14 +218,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// 按 userPrefs 互斥规则计算 StreamBuffer 参数
-  /// bufferSize>0 → 纯缓冲模式(speed=0);否则 streamSpeed>0 → 限速模式(maxBuffer=0)
-  double _resolveStreamSpeed(UserPrefs p) =>
-      p.bufferSize > 0 ? 0.0 : p.streamSpeed.toDouble();
-  int _resolveBufferSize(UserPrefs p) =>
-      p.streamSpeed > 0 ? 0 : p.bufferSize;
-  // 互斥语义:两者都>0 时以 speed 为准(bufferSize 让位) — 上面的三元顺序即体现了该优先级
-
   Future<void> _stop() async {
     // 仅翻转 UI 标志并置停止请求位;流本身由 _send 的 finally 收尾
     _stopRequested = true;
@@ -227,8 +227,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _scrollToEnd() {
+    if (!_shouldAutoScroll) return; // 用户已上滚 → 不打扰
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scroll.hasClients) return;
+      if (!mounted || !_scroll.hasClients) return;
       _scroll.animateTo(_scroll.position.maxScrollExtent,
           duration: Motion.medium2, curve: Motion.emphasizedDecelerate);
     });
