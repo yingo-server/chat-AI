@@ -43,8 +43,9 @@ Thumbs.db
 *.app
 *.log
 flutter_console.log
-android/
+/android/
 
 # Vault secrets (generated at build time, never committed)
 assets/vault.bin
-android/app/src/main/cpp/vault_master.h
+/android/app/src/main/cpp/vault_master.h
+tools/vault_master.h
