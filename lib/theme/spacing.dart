@@ -54,8 +54,14 @@ class Insets {
   /// 卡片内边距:16 四周,底部略收
   static const card = EdgeInsets.fromLTRB(Gap.lg, Gap.lg, Gap.lg, Gap.md);
 
-  /// 消息气泡内:水平 16 / 上 12 / 下 8
-  static const bubble = EdgeInsets.fromLTRB(Gap.lg, Gap.md, Gap.lg, Gap.sm);
+  /// 消息气泡内:水平 16 / 上下 12(上下对称,避免元信息行贴底)
+  static const bubble = EdgeInsets.fromLTRB(Gap.lg, Gap.md, Gap.lg, Gap.md);
+
+  /// 用户气泡内:水平 14 / 上下 12 —— 短消息更紧凑,视觉重心更稳
+  static const bubbleUser = EdgeInsets.fromLTRB(14, Gap.md, 14, Gap.md);
+
+  /// 元信息行(时间戳 + 复制按钮)的左右留白:与正文左边缘对齐
+  static const bubbleMeta = EdgeInsets.fromLTRB(0, 0, 0, 0);
 
   /// 底部输入区域
   static const composer = EdgeInsets.fromLTRB(Gap.md, Gap.xs, Gap.md, Gap.md);

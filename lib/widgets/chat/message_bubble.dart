@@ -51,7 +51,8 @@ class MessageBubble extends StatelessWidget {
           child: InkWell(
             onLongPress: () => _copy(context),
             child: Padding(
-              padding: Insets.bubble,
+              // 用户气泡水平略收(14),短消息更紧凑;助手保持 16
+              padding: isUser ? Insets.bubbleUser : Insets.bubble,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -67,31 +68,42 @@ class MessageBubble extends StatelessWidget {
                   else
                     MarkdownText(
                       message.content,
-                      // 助手消息继承气泡文字色
                       textStyle: theme.textTheme.bodyLarge
                           ?.copyWith(color: fg, height: 1.5),
                     ),
-                  const SizedBox(height: Gap.xs),
+                  // 元信息行:时间戳 + 复制按钮。
+                  // - 与正文之间 8dp;
+                  // - 用 48dp 触达区(InkWell)包住 24dp 视觉图标,兼顾 M3 无障碍;
+                  // - 负 margin 抵消多出的 12dp,使视觉重心仍与正文左缘对齐。
+                  const SizedBox(height: Gap.sm),
                   Row(
                     mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Flexible(
-                        child: Text(
-                          _formatTime(message.createdAt),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.labelSmall
-                              ?.copyWith(color: metaFg),
-                        ),
+                      Text(
+                        _formatTime(message.createdAt),
+                        style: theme.textTheme.labelSmall
+                            ?.copyWith(color: metaFg),
                       ),
                       const SizedBox(width: Gap.xs),
-                      IconButton(
-                        visualDensity: VisualDensity.compact,
-                        tooltip: '复制',
-                        iconSize: 16,
-                        color: metaFg,
-                        icon: const Icon(Icons.copy_rounded),
-                        onPressed: () => _copy(context),
+                      SizedBox(
+                        width: Gap.minTouchTarget,
+                        height: Gap.minTouchTarget,
+                        child: Align(
+                          alignment: Alignment.center,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: () => _copy(context),
+                            child: Padding(
+                              padding: const EdgeInsets.all(Gap.md),
+                              child: Icon(
+                                Icons.copy_rounded,
+                                size: 14,
+                                color: metaFg,
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
                     ],
                   ),

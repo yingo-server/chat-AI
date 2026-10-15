@@ -130,7 +130,7 @@ class _Block extends StatelessWidget {
         _ => theme.textTheme.titleSmall,
       };
       return Padding(
-        padding: const EdgeInsets.only(top: 14, bottom: 6),
+        padding: const EdgeInsets.only(top: 12, bottom: 4),
         child: _Inline(
           node,
           theme,
@@ -149,14 +149,15 @@ class _Block extends StatelessWidget {
               : node.children!.first.textContent)
           : '';
       final lang = node.attributes['class']?.replaceFirst('language-', '');
-      return _CodeBlock(code: code, language: lang, theme: theme);
+      return _CodeBlock(
+          code: code, language: lang, theme: theme, baseStyle: baseStyle);
     }
 
     // ---- 引用块 ----
     if (node is md.Element && node.tag == 'blockquote') {
       return Container(
         margin: const EdgeInsets.symmetric(vertical: 6),
-        padding: const EdgeInsets.fromLTRB(12, 6, 0, 6),
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
         decoration: BoxDecoration(
           border: Border(left: BorderSide(color: s.primary, width: 3)),
         ),
@@ -193,7 +194,7 @@ class _Block extends StatelessWidget {
 
     // ---- 段落 ----
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 3),
       child: _Inline(
         node,
         theme,
@@ -272,7 +273,7 @@ class _ListItem extends StatelessWidget {
         children: [
           if (isTask)
             Padding(
-              padding: const EdgeInsets.only(top: 4, right: 8),
+              padding: const EdgeInsets.only(top: 4, right: 6),
               child: Icon(
                 checked
                     ? Icons.check_box_rounded
@@ -285,7 +286,7 @@ class _ListItem extends StatelessWidget {
             Container(
               width: 22,
               alignment: Alignment.topRight,
-              padding: const EdgeInsets.only(top: 4, right: 8),
+              padding: const EdgeInsets.only(top: 4, right: 6),
               child: Text(marker, style: baseStyle),
             ),
           Expanded(
@@ -308,23 +309,26 @@ class _CodeBlock extends StatelessWidget {
   final String code;
   final String? language;
   final ThemeData theme;
+  final TextStyle baseStyle;
 
   const _CodeBlock({
     required this.code,
     required this.theme,
+    required this.baseStyle,
     this.language,
   });
 
   @override
   Widget build(BuildContext context) {
     final s = theme.colorScheme;
-    final mono = theme.textTheme.bodyMedium?.copyWith(
+    final mono = baseStyle.copyWith(
       fontFamily: 'monospace',
       fontFamilyFallback: const ['Menlo', 'Consolas', 'Roboto Mono'],
+      fontSize: (baseStyle.fontSize ?? 14) - 1,
       height: 1.45,
     );
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8),
+      margin: const EdgeInsets.symmetric(vertical: 6),
       decoration: BoxDecoration(
         color: s.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(12),
@@ -336,7 +340,7 @@ class _CodeBlock extends StatelessWidget {
         children: [
           if (language != null && language!.isNotEmpty)
             Container(
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
               color: s.surfaceContainerHigh,
               child: Text(
                 language!,

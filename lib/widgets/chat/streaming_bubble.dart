@@ -45,7 +45,9 @@ class StreamingBubble extends StatelessWidget {
               ),
             ),
             child: Padding(
-              padding: Insets.bubble,
+              // 无元信息行 → 底部少 4dp,使流式气泡高度接近最终气泡
+              padding: EdgeInsets.fromLTRB(
+                  Gap.lg, Gap.md, Gap.lg, finished ? Gap.md : Gap.sm),
               child: SelectionArea(
                 child: finished
                     // 流式结束:完整 Markdown 渲染(代码块/列表/表格等)
