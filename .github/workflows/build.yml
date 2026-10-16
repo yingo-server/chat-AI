@@ -177,29 +177,41 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
-      - name: Ensure Android NDK (reuse runner copy, else install with retries)
+      - name: Detect Android NDK
+        id: ndk
         run: |
-          set -e
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          AVAILABLE="$(ls "$SDK_ROOT/ndk" 2>/dev/null | head -1 || true)"
-          if [ -z "$AVAILABLE" ]; then
-            SDKM="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-            [ -x "$SDKM" ] || SDKM="$SDK_ROOT/tools/bin/sdkmanager"
-            for i in 1 2 3; do
-              echo "NDK not found, install attempt $i"
-              yes | "$SDKM" --install "ndk;26.1.10909125" >/dev/null 2>&1 || true
-              AVAILABLE="$(ls "$SDK_ROOT/ndk" 2>/dev/null | head -1 || true)"
-              [ -n "$AVAILABLE" ] && break
-              rm -rf "$SDK_ROOT/ndk"
-              sleep 10
-            done
+          echo "SDK_ROOT=$SDK_ROOT"
+          ls "$SDK_ROOT" 2>/dev/null || true
+          FOUND="$(ls "$SDK_ROOT/ndk" 2>/dev/null | sort -V | tail -1 || true)"
+          echo "preinstalled NDK: '${FOUND}'"
+          echo "version=$FOUND" >> "$GITHUB_OUTPUT"
+
+      - name: Install NDK r26d (only when the runner has none)
+        id: install_ndk
+        if: steps.ndk.outputs.version == ''
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+          add-to-path: false
+
+      - name: Pin ndkVersion in android/app/build.gradle
+        env:
+          DETECTED: ${{ steps.ndk.outputs.version }}
+          NDK_HOME_OUT: ${{ steps.install_ndk.outputs.ndk-path }}
+        run: |
+          if [ -n "$DETECTED" ]; then
+            VER="$DETECTED"
+          elif [ -n "$ANDROID_NDK_HOME" ]; then
+            VER="$(basename "$ANDROID_NDK_HOME")"
+          elif [ -n "$NDK_HOME_OUT" ]; then
+            VER="$(basename "$NDK_HOME_OUT")"
+          else
+            echo "::error::no Android NDK available"; exit 1
           fi
-          if [ -z "$AVAILABLE" ]; then
-            echo "::error::No usable Android NDK on runner and install failed"
-            exit 1
-          fi
-          echo "Using Android NDK: $AVAILABLE"
-          sed -i "s/ndkVersion \".*\"/ndkVersion \"$AVAILABLE\"/" android/app/build.gradle
+          echo "using NDK: $VER"
+          sed -i "s/ndkVersion \".*\"/ndkVersion \"$VER\"/" android/app/build.gradle
+          grep -n 'ndkVersion' android/app/build.gradle
 
       - name: Install p7zip-full + zip
         run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full zip
@@ -349,29 +361,41 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
-      - name: Ensure Android NDK (reuse runner copy, else install with retries)
+      - name: Detect Android NDK
+        id: ndk
         run: |
-          set -e
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          AVAILABLE="$(ls "$SDK_ROOT/ndk" 2>/dev/null | head -1 || true)"
-          if [ -z "$AVAILABLE" ]; then
-            SDKM="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-            [ -x "$SDKM" ] || SDKM="$SDK_ROOT/tools/bin/sdkmanager"
-            for i in 1 2 3; do
-              echo "NDK not found, install attempt $i"
-              yes | "$SDKM" --install "ndk;26.1.10909125" >/dev/null 2>&1 || true
-              AVAILABLE="$(ls "$SDK_ROOT/ndk" 2>/dev/null | head -1 || true)"
-              [ -n "$AVAILABLE" ] && break
-              rm -rf "$SDK_ROOT/ndk"
-              sleep 10
-            done
+          echo "SDK_ROOT=$SDK_ROOT"
+          ls "$SDK_ROOT" 2>/dev/null || true
+          FOUND="$(ls "$SDK_ROOT/ndk" 2>/dev/null | sort -V | tail -1 || true)"
+          echo "preinstalled NDK: '${FOUND}'"
+          echo "version=$FOUND" >> "$GITHUB_OUTPUT"
+
+      - name: Install NDK r26d (only when the runner has none)
+        id: install_ndk
+        if: steps.ndk.outputs.version == ''
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+          add-to-path: false
+
+      - name: Pin ndkVersion in android/app/build.gradle
+        env:
+          DETECTED: ${{ steps.ndk.outputs.version }}
+          NDK_HOME_OUT: ${{ steps.install_ndk.outputs.ndk-path }}
+        run: |
+          if [ -n "$DETECTED" ]; then
+            VER="$DETECTED"
+          elif [ -n "$ANDROID_NDK_HOME" ]; then
+            VER="$(basename "$ANDROID_NDK_HOME")"
+          elif [ -n "$NDK_HOME_OUT" ]; then
+            VER="$(basename "$NDK_HOME_OUT")"
+          else
+            echo "::error::no Android NDK available"; exit 1
           fi
-          if [ -z "$AVAILABLE" ]; then
-            echo "::error::No usable Android NDK on runner and install failed"
-            exit 1
-          fi
-          echo "Using Android NDK: $AVAILABLE"
-          sed -i "s/ndkVersion \".*\"/ndkVersion \"$AVAILABLE\"/" android/app/build.gradle
+          echo "using NDK: $VER"
+          sed -i "s/ndkVersion \".*\"/ndkVersion \"$VER\"/" android/app/build.gradle
+          grep -n 'ndkVersion' android/app/build.gradle
 
       - name: Install p7zip-full + zip
         run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full zip
@@ -521,29 +545,41 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
-      - name: Ensure Android NDK (reuse runner copy, else install with retries)
+      - name: Detect Android NDK
+        id: ndk
         run: |
-          set -e
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          AVAILABLE="$(ls "$SDK_ROOT/ndk" 2>/dev/null | head -1 || true)"
-          if [ -z "$AVAILABLE" ]; then
-            SDKM="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-            [ -x "$SDKM" ] || SDKM="$SDK_ROOT/tools/bin/sdkmanager"
-            for i in 1 2 3; do
-              echo "NDK not found, install attempt $i"
-              yes | "$SDKM" --install "ndk;26.1.10909125" >/dev/null 2>&1 || true
-              AVAILABLE="$(ls "$SDK_ROOT/ndk" 2>/dev/null | head -1 || true)"
-              [ -n "$AVAILABLE" ] && break
-              rm -rf "$SDK_ROOT/ndk"
-              sleep 10
-            done
+          echo "SDK_ROOT=$SDK_ROOT"
+          ls "$SDK_ROOT" 2>/dev/null || true
+          FOUND="$(ls "$SDK_ROOT/ndk" 2>/dev/null | sort -V | tail -1 || true)"
+          echo "preinstalled NDK: '${FOUND}'"
+          echo "version=$FOUND" >> "$GITHUB_OUTPUT"
+
+      - name: Install NDK r26d (only when the runner has none)
+        id: install_ndk
+        if: steps.ndk.outputs.version == ''
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+          add-to-path: false
+
+      - name: Pin ndkVersion in android/app/build.gradle
+        env:
+          DETECTED: ${{ steps.ndk.outputs.version }}
+          NDK_HOME_OUT: ${{ steps.install_ndk.outputs.ndk-path }}
+        run: |
+          if [ -n "$DETECTED" ]; then
+            VER="$DETECTED"
+          elif [ -n "$ANDROID_NDK_HOME" ]; then
+            VER="$(basename "$ANDROID_NDK_HOME")"
+          elif [ -n "$NDK_HOME_OUT" ]; then
+            VER="$(basename "$NDK_HOME_OUT")"
+          else
+            echo "::error::no Android NDK available"; exit 1
           fi
-          if [ -z "$AVAILABLE" ]; then
-            echo "::error::No usable Android NDK on runner and install failed"
-            exit 1
-          fi
-          echo "Using Android NDK: $AVAILABLE"
-          sed -i "s/ndkVersion \".*\"/ndkVersion \"$AVAILABLE\"/" android/app/build.gradle
+          echo "using NDK: $VER"
+          sed -i "s/ndkVersion \".*\"/ndkVersion \"$VER\"/" android/app/build.gradle
+          grep -n 'ndkVersion' android/app/build.gradle
 
       - name: Install p7zip-full + zip
         run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full zip
