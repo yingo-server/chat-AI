@@ -1,0 +1,61 @@
+name: Cleanup artifacts
+
+# 每 2 小时清理一次制品:只保留最近 3 次工作流运行产生的制品,
+# 其余全部删除。制品配额被打满会导致后续构建在 upload-artifact 处失败。
+on:
+  schedule:
+    - cron: '0 */2 * * *'   # 每 2 小时(UTC 偶数点)
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: cleanup-artifacts
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete artifacts except those of the 3 most recent runs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const KEEP_RUNS = 3;
+
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRunsForRepo,
+              { owner, repo, per_page: 100 },
+            );
+            const keepRunIds = new Set(runs.slice(0, KEEP_RUNS).map(r => r.id));
+            core.info(`keeping artifacts from runs: ${[...keepRunIds].join(', ')}`);
+
+            const artifacts = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              { owner, repo, per_page: 100 },
+            );
+            core.info(`found ${artifacts.length} artifact(s)`);
+
+            let removed = 0, kept = 0, freed = 0, failed = 0;
+            for (const a of artifacts) {
+              const runId = a.workflow_run ? a.workflow_run.id : null;
+              if (runId !== null && keepRunIds.has(runId)) { kept++; continue; }
+              try {
+                await github.rest.actions.deleteArtifact({
+                  owner, repo, artifact_id: a.id,
+                });
+                removed++;
+                freed += a.size_in_bytes || 0;
+              } catch (e) {
+                failed++;
+                core.warning(`could not delete #${a.id} (${a.name}): ${e.message}`);
+              }
+            }
+            core.notice(
+              `artifacts: kept ${kept}, removed ${removed}, failed ${failed}, ` +
+              `freed ${(freed / 1048576).toFixed(1)} MB`
+            );
