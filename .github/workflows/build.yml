@@ -69,6 +69,27 @@ jobs:
           /tmp/vault_host_test --vault=assets/vault.bin \
               --expect-endpoint="$API_ENDPOINT" --expect-key="$API_KEY"
 
+      - name: Create the release skeleton (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: AI Chat ${{ github.ref_name }}
+          body: |
+            AI Chat for Android — Flutter + native vault
+
+            - 3 ABIs x 2 formats (APK / AAB) x 2 compression (7z / zip)
+            - Endpoint and API key are encrypted in assets/vault.bin and decrypted
+              inside libvault.so; the master key is embedded obfuscated in the
+              native library and never stored in the repository
+            - Flutter --obfuscate + R8 minify + resource shrinking, release signed
+            - Material 3 UI, local SQLite storage, Markdown rendering,
+              streaming fade-in, configurable output speed
+            - Model: cn:deepseek-v4-flash (1M context)
+          fail_on_unmatched_files: false
+          files: |
+            README.md
+
   build-arm64:
     needs: prep
     if: needs.prep.result == 'success'
@@ -245,13 +266,13 @@ jobs:
           ls -lh
         continue-on-error: true
 
-      - name: Upload arm64 packages
-        uses: actions/upload-artifact@v4
+      - name: Attach arm64 packages to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
         with:
-          name: chat-ai-arm64-packages
-          path: stage/
-          retention-days: 1
-          if-no-files-found: warn
+          tag_name: ${{ github.ref_name }}
+          fail_on_unmatched_files: true
+          files: stage/*
 
   build-armv7:
     needs: prep
@@ -429,13 +450,13 @@ jobs:
           ls -lh
         continue-on-error: true
 
-      - name: Upload armv7 packages
-        uses: actions/upload-artifact@v4
+      - name: Attach armv7 packages to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
         with:
-          name: chat-ai-armv7-packages
-          path: stage/
-          retention-days: 1
-          if-no-files-found: warn
+          tag_name: ${{ github.ref_name }}
+          fail_on_unmatched_files: true
+          files: stage/*
 
   build-x64:
     needs: prep
@@ -613,53 +634,10 @@ jobs:
           ls -lh
         continue-on-error: true
 
-      - name: Upload x64 packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: chat-ai-x64-packages
-          path: stage/
-          retention-days: 1
-          if-no-files-found: warn
-
-  # ---- Release:任一 build 成功就发布 ----
-  release:
-    needs:
-      - build-arm64
-      - build-armv7
-      - build-x64
-    if: always() && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Download all per-ABI packages
-        uses: actions/download-artifact@v4
-        with:
-          path: release-stage
-          pattern: chat-ai-*-packages
-          merge-multiple: true
-        continue-on-error: true
-
-      - name: List downloaded packages
-        run: |
-          find release-stage -type f 2>/dev/null | head -20
-          echo "---"
-          du -sh release-stage 2>/dev/null
-
-      - name: Create GitHub Release
+      - name: Attach x64 packages to the release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag: ${{ github.ref_name }}
-          name: "AI Chat ${{ github.ref_name }}"
-          body: |
-            AI Chat — Flutter + native vault
-
-            - 3 ABIs × 2 formats (APK / AAB) × 2 compression (7z / zip) — up to 12 packages
-            - Endpoint / API key encrypted in native libvault.so (AES-256-CTR)
-            - Master key in Android Keystore
-            - Anti-debug / anti-root / anti-emulator detection
-            - Flutter --obfuscate + R8 + ProGuard 5-pass
-            - Model: cn:deepseek-v4-flash (1M ctx, reasoning_effort toggled per turn)
+          tag_name: ${{ github.ref_name }}
           fail_on_unmatched_files: true
-          files: |
-            release-stage/**/*.7z
-            release-stage/**/*.zip
+          files: stage/*
