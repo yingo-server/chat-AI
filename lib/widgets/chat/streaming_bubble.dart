@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../../theme/spacing.dart';
-import '../animation/message_animations.dart';
+import 'streaming_text.dart';
 
 /// 流式输出中的助手气泡。
 /// 与 MessageBubble 共用形状与配色,避免流结束时跳变。
-/// 输出期间用纯文本 + 行内光标(每帧成本最低);
-/// 结束后由聊天页切换为 MessageBubble(Markdown 渲染)。
+/// 文本逐字淡入(见 StreamingText),结束后由聊天页替换为 Markdown 气泡。
 class StreamingBubble extends StatelessWidget {
   final String text;
   const StreamingBubble({super.key, required this.text});
@@ -21,6 +19,8 @@ class StreamingBubble extends StatelessWidget {
 
     const r16 = Radius.circular(16);
     const r4 = Radius.circular(4);
+    final style = theme.textTheme.bodyLarge
+        ?.copyWith(color: s.onSurface, height: 1.5);
 
     return Semantics(
       liveRegion: true,
@@ -45,28 +45,12 @@ class StreamingBubble extends StatelessWidget {
               ),
             ),
             child: Padding(
-              // 流式期间无元信息行 → 底部 8dp,接近最终气泡高度
-              padding: EdgeInsets.fromLTRB(
-                  Gap.lg, Gap.md, Gap.lg, Gap.sm),
-              child: SelectionArea(
-                child: Text.rich(
-                  TextSpan(
-                    children: [
-                      TextSpan(
-                        text: text,
-                        style: theme.textTheme.bodyLarge
-                            ?.copyWith(color: s.onSurface, height: 1.5),
-                      ),
-                      WidgetSpan(
-                        alignment: PlaceholderAlignment.middle,
-                        child: Padding(
-                          padding: const EdgeInsets.only(left: Gap.xs),
-                          child: BlinkingCursor(color: s.primary),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              padding:
+                  const EdgeInsets.fromLTRB(Gap.lg, Gap.md, Gap.lg, Gap.sm),
+              child: StreamingText(
+                text,
+                style: style,
+                cursorColor: s.primary,
               ),
             ),
           ),

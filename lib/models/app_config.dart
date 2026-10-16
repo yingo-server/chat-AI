@@ -57,6 +57,10 @@ class AppConfig {
             (aiJson['requestTimeoutSeconds'] as num?)?.toInt() ?? 120,
         streamCharsPerSecond:
             (aiJson['streamCharsPerSecond'] as num?)?.toDouble() ?? 24,
+        firstTurnReasoning:
+            aiJson['firstTurnReasoning'] as String? ?? 'high',
+        subsequentReasoning:
+            aiJson['subsequentReasoning'] as String? ?? 'high',
       ),
       context: ContextConfig.fromJson(
           json['context'] as Map<String, dynamic>? ?? {}),
@@ -141,8 +145,10 @@ class AiConfig {
         maxTokens: 16384,
         requestTimeoutSeconds: 120,
         streamCharsPerSecond: 24,
-        firstTurnReasoning: 'low',
-        subsequentReasoning: 'none',
+        // 实测(m):none / low 会让系统提示词几乎失效(回复从 300+ 字降到 50–60 字),
+        // high 为服务端默认档,遵循度最佳。可经 config.json 的 ai 块覆盖。
+        firstTurnReasoning: 'high',
+        subsequentReasoning: 'high',
       );
 
   /// 从 native vault 读 endpoint + key
@@ -158,8 +164,9 @@ class AiConfig {
       maxTokens: 16384,
       requestTimeoutSeconds: 120,
       streamCharsPerSecond: 24,
-      firstTurnReasoning: 'low',
-      subsequentReasoning: 'none',
+      // 实测: none / low 会让系统提示词几乎失效(回复从 300+ 字降到 50–60 字)
+      firstTurnReasoning: 'high',
+      subsequentReasoning: 'high',
     );
   }
 

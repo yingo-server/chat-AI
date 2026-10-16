@@ -1,18 +1,21 @@
 {
   "_doc": "用户偏好 + 提示词;endpoint / apiKey 由 native vault 保护(assets/vault.bin + Android Keystore)。",
   "ai": {
-    "model": "cn:deepseek-v4.1-flash",
+    "model": "cn:deepseek-v4-flash",
     "temperature": 0.7,
     "maxTokens": 16384,
     "requestTimeoutSeconds": 120,
-    "streamCharsPerSecond": 24
+    "streamCharsPerSecond": 24,
+    "_comment_reasoning": "推理强度对提示词遵循度影响极大(实测):high=300+ 字,low/none=50~60 字。可选 low/high/xhigh/none。",
+    "firstTurnReasoning": "high",
+    "subsequentReasoning": "high"
   },
   "context": {
     "maxContextMessages": 1000000,
     "compressTriggerMessages": 80,
     "keepRecentMessages": 24,
     "compressPrompt": "请把以下对话历史压缩成客观摘要,保留关键事实、用户偏好和未完成的承诺,不超过 400 字。",
-    "compressModel": "cn:deepseek-v4.1-flash"
+    "compressModel": "cn:deepseek-v4-flash"
   },
   "systemPrompts": [
     {

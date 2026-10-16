@@ -137,6 +137,38 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _attachments.remove(a));
   }
 
+  /// 附件选择:统一入口,底部表单二选一(图片 / 文件)
+  Future<void> _showAttachSheet() async {
+    final s = Theme.of(context).colorScheme;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(Icons.image_outlined, color: s.onSurfaceVariant),
+              title: const Text('图片'),
+              subtitle: const Text('从相册选择'),
+              onTap: () => Navigator.pop(sheetCtx, 'image'),
+            ),
+            ListTile(
+              leading: Icon(Icons.attach_file, color: s.onSurfaceVariant),
+              title: const Text('文件'),
+              subtitle: const Text('选择任意文件'),
+              onTap: () => Navigator.pop(sheetCtx, 'file'),
+            ),
+            const SizedBox(height: Gap.sm),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'image') await _pickImage();
+    if (choice == 'file') await _pickFile();
+  }
+
   // ===== 发送 =====
 
   Future<void> _send() async {
@@ -337,81 +369,96 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               ),
             ),
+          // ── 底部输入区 ─────────────────────────────────────────
+          // M3 组合输入条:单个圆角容器承载 [附件][输入框][发送],
+          // 容器本身有描边与轻微投影,文本域无边框,避免"框套框"。
           SafeArea(
             top: false,
             child: Padding(
               padding: Insets.composer,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  IconButton(
-                    tooltip: '附加图片',
-                    icon: const Icon(Icons.image_outlined),
-                    onPressed: _busy ? null : _pickImage,
-                  ),
-                  IconButton(
-                    tooltip: '附加文件',
-                    icon: const Icon(Icons.attach_file),
-                    onPressed: _busy ? null : _pickFile,
-                  ),
-                  Expanded(
-                    child: TextField(
-                      controller: _input,
-                      focusNode: _focus,
-                      minLines: 1,
-                      maxLines: 5,
-                      enabled: !_busy,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodyLarge
-                          ?.copyWith(fontSize: prefs.fontSize.toDouble()),
-                      textInputAction: TextInputAction.newline,
-                      decoration: InputDecoration(
-                        hintText: '输入消息…',
-                        isDense: true,
-                        fillColor: scheme.surfaceContainerHighest,
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 18, vertical: 12),
-                        border: const OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.all(Radius.circular(28)),
-                          borderSide: BorderSide.none,
-                        ),
-                        enabledBorder: const OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.all(Radius.circular(28)),
-                          borderSide: BorderSide.none,
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius:
-                              const BorderRadius.all(Radius.circular(28)),
-                          borderSide:
-                              BorderSide(color: scheme.primary, width: 2),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHigh,
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: scheme.outlineVariant),
+                  boxShadow: [
+                    BoxShadow(
+                      color: scheme.shadow.withAlpha(_busy ? 0 : 14),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    // 附件入口:单个按钮,弹出选择
+                    Padding(
+                      padding: const EdgeInsets.only(left: 4, bottom: 4),
+                      child: IconButton(
+                        tooltip: '添加附件',
+                        icon: const Icon(Icons.add_rounded),
+                        color: scheme.onSurfaceVariant,
+                        onPressed: _busy ? null : _showAttachSheet,
+                      ),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: _input,
+                        focusNode: _focus,
+                        minLines: 1,
+                        maxLines: 6,
+                        enabled: !_busy,
+                        keyboardType: TextInputType.multiline,
+                        textInputAction: TextInputAction.newline,
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodyLarge
+                            ?.copyWith(
+                              fontSize: prefs.fontSize.toDouble(),
+                              height: 1.4,
+                            ),
+                        decoration: const InputDecoration(
+                          hintText: '输入消息…',
+                          isDense: true,
+                          filled: false,
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          contentPadding: EdgeInsets.symmetric(vertical: 14),
                         ),
                       ),
-                      onSubmitted: (_) => _send(),
                     ),
-                  ),
-                  const SizedBox(width: Gap.sm),
-                  AnimatedSwitcher(
-                    duration: Motion.short4,
-                    switchInCurve: Motion.emphasizedDecelerate,
-                    switchOutCurve: Motion.emphasizedAccelerate,
-                    child: _busy
-                        ? FilledButton.tonalIcon(
-                            key: const ValueKey('stop'),
-                            onPressed: _stop,
-                            icon: const Icon(Icons.stop),
-                            label: const Text('停止'),
-                          )
-                        : IconButton.filled(
-                            key: const ValueKey('send'),
-                            onPressed: hasConfig ? _send : null,
-                            icon: const Icon(Icons.arrow_upward),
-                            tooltip: '发送',
-                          ),
-                  ),
-                ],
+                    // 发送 / 停止
+                    Padding(
+                      padding:
+                          const EdgeInsets.only(left: 4, right: 6, bottom: 6),
+                      child: AnimatedSwitcher(
+                        duration: Motion.short4,
+                        switchInCurve: Motion.emphasizedDecelerate,
+                        switchOutCurve: Motion.emphasizedAccelerate,
+                        child: SizedBox(
+                          key: ValueKey(_busy ? 'stop' : 'send'),
+                          width: 40,
+                          height: 40,
+                          child: _busy
+                              ? IconButton.filledTonal(
+                                  tooltip: '停止',
+                                  onPressed: _stop,
+                                  icon: const Icon(Icons.stop_rounded,
+                                      size: 20),
+                                )
+                              : IconButton.filled(
+                                  tooltip: '发送',
+                                  onPressed: hasConfig ? _send : null,
+                                  icon: const Icon(Icons.arrow_upward_rounded,
+                                      size: 20),
+                                ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

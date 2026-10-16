@@ -81,16 +81,17 @@ class ChatService {
       await AppDatabase.instance.insertMessage(userMsg);
     }
 
-    // 调用方契约:history 不包含本轮 userText,由下方 prompt.add 单独追加
-    final userTurns = history
-            .where((m) =>
-                m.role == MessageRole.user || m.role == MessageRole.assistant)
-            .length ~/
-        2;
+    // 调用方契约:history 只含【本对话】的历史,且不含本轮 userText。
+    // 因此下面的轮次统计天然是"对话级"的 —— 新对话首条消息必然为 0 轮,
+    // 与其它对话互不影响(ChatService / PromptScheduler 均为每对话一份实例)。
+    final priorMsgs = history
+        .where((m) =>
+            m.role == MessageRole.user || m.role == MessageRole.assistant)
+        .toList();
+    final userTurns = priorMsgs.length ~/ 2;
     final injectHidden = _scheduler.shouldInjectHidden(userTurns);
-    // 首轮:userTurns == 0(对话没历史 user-assistant 对)=> 用 firstTurnReasoning
-    // 之后:用 subsequentReasoning(默认 'none' = 关闭思考)
-    final isFirstTurn = userTurns == 0;
+    // 首轮:本对话尚无任何 user/assistant 消息(不依赖配对数,避免悬空消息误判)
+    final isFirstTurn = priorMsgs.isEmpty;
 
     final prompt = buildPrompt(
       chat: chat,
