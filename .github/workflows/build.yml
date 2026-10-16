@@ -272,7 +272,9 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           fail_on_unmatched_files: true
-          files: stage/*
+          files: |
+            stage/*.7z
+            stage/*.zip
 
   build-armv7:
     needs: prep
@@ -456,7 +458,9 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           fail_on_unmatched_files: true
-          files: stage/*
+          files: |
+            stage/*.7z
+            stage/*.zip
 
   build-x64:
     needs: prep
@@ -640,4 +644,6 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           fail_on_unmatched_files: true
-          files: stage/*
+          files: |
+            stage/*.7z
+            stage/*.zip
