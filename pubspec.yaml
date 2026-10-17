@@ -1,7 +1,7 @@
 name: ai_flutter
 description: AI Chat - Flutter rewrite, Material 3, local-only storage.
 publish_to: 'none'
-version: 0.4.4+1
+version: 0.4.5+1
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
