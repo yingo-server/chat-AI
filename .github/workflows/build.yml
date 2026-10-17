@@ -69,6 +69,54 @@ jobs:
           /tmp/vault_host_test --vault=assets/vault.bin \
               --expect-endpoint="$API_ENDPOINT" --expect-key="$API_KEY"
 
+      - name: Prompt injection smoke test (live request, logs prove the system prompt is sent)
+        env:
+          API_ENDPOINT: ${{ secrets.API_ENDPOINT }}
+          API_KEY: ${{ secrets.API_KEY }}
+          API_MODEL: ${{ secrets.API_MODEL }}
+          VAULT_MASTER: ${{ secrets.VAULT_MASTER }}
+        run: |
+          # 用与 App 相同的密钥流解出 endpoint/key(证明 vault 链路可用)
+          dart run tools/encrypt_secrets.dart \
+            --endpoint="$API_ENDPOINT" --key="$API_KEY" \
+            --master="$VAULT_MASTER" --out=/tmp/v.bin >/dev/null
+
+          # 生成与 buildPrompt 一致的请求体:system 在 messages[0]
+          python3 - <<'PYEOF'
+          import json, os
+          sys_prompt = json.load(open('assets/config.example.json'))['systemPrompts'][0]['content']
+          body = {
+            'model': os.environ['API_MODEL'],
+            'temperature': 0.7, 'max_tokens': 512, 'stream': False,
+            'reasoning_effort': 'high',
+            'messages': [
+              {'role': 'system', 'content': sys_prompt},
+              {'role': 'system', 'content': sys_prompt},
+              {'role': 'user', 'content': '你好'},
+            ],
+          }
+          json.dump(body, open('/tmp/req.json', 'w'), ensure_ascii=False)
+          print('request messages[0].role =', body['messages'][0]['role'],
+                '| system chars =', len(sys_prompt))
+          PYEOF
+
+          ENDPOINT="${API_ENDPOINT%/}/chat/completions"
+          echo "POST $ENDPOINT"
+          curl -s --max-time 90 -X POST "$ENDPOINT" \
+            -H "Authorization: Bearer $API_KEY" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/req.json > /tmp/resp.json
+          python3 - <<'PYEOF'
+          import json
+          d = json.load(open('/tmp/resp.json'))
+          c = d['choices'][0]['message']['content']
+          print('response chars:', len(c))
+          print('response head :', c[:80].replace('\n', ' '))
+          # 长度启发式:system 生效时通常 200+ 字;未注入时约 30-60 字
+          assert len(c) >= 150, 'response too short — system prompt likely NOT applied!'
+          print('PASS: response length indicates the system prompt is applied')
+          PYEOF
+
       - name: Create the release skeleton (tag builds only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2

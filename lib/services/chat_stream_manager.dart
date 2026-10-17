@@ -87,9 +87,9 @@ class ChatStreamManager extends ChangeNotifier {
         history: history,
         userText: userText,
         alreadyPersistedUserText: alreadyPersistedUserText,
+        buffer: session.buffer, // 关键:接入限速 + 100 字上限缓冲
         onDelta: (d) {
           if (session.cancelled) return;
-          session.buffer.add(d); // 限速 + 上限 100 字
         },
       )) {
         // 流结束(内容已在 sendStream 内落库)

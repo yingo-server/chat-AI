@@ -64,6 +64,10 @@ class ChatService {
   /// 每个聊天同一时刻只允许一次压缩,防止并发重入
   final Set<int> _compressing = {};
 
+  /// 最近一次实际发送的完整消息序列(含 system 提示词),供界面核对
+  List<ApiMessage> _lastPrompt = const [];
+  List<ApiMessage> get lastPrompt => _lastPrompt;
+
   Stream<String> sendStream({
     required Chat chat,
     required List<Message> history,
@@ -89,7 +93,9 @@ class ChatService {
             m.role == MessageRole.user || m.role == MessageRole.assistant)
         .toList();
     final userTurns = priorMsgs.length ~/ 2;
-    final injectHidden = _scheduler.shouldInjectHidden(userTurns);
+    // 按要求:每轮都重复注入一次系统提示词,确保始终生效
+    // (早期实现为每 2~4 轮一次,实测长对话中偶有"提示词失效"的观感)
+    const injectHidden = true;
     // 首轮:本对话尚无任何 user/assistant 消息(不依赖配对数,避免悬空消息误判)
     final isFirstTurn = priorMsgs.isEmpty;
 
@@ -100,6 +106,9 @@ class ChatService {
       injectHiddenThisTurn: injectHidden,
     );
     prompt.add(ApiMessage('user', userText));
+
+    // 记录实际发送内容(界面"系统提示词"面板直接读取这里)
+    _lastPrompt = List<ApiMessage>.unmodifiable(prompt);
 
     final full = StringBuffer();
     final stream = _client.chatStream(prompt, firstTurn: isFirstTurn);
