@@ -151,13 +151,14 @@ class LlmStreamClient {
     String? overrideModel,
     double? temperature,
     String? reasoningEffort,
+    int? maxTokensOverride,
   }) async {
     final m = overrideModel ?? config.model;
     final t = temperature ?? config.temperature;
     final body = <String, dynamic>{
       'model': m,
       'temperature': t,
-      'max_tokens': config.maxTokens,
+      'max_tokens': maxTokensOverride ?? config.maxTokens,
       'stream': false,
       'messages': messages.map((e) => e.toJson()).toList(),
     };

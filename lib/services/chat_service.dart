@@ -16,13 +16,7 @@ List<ApiMessage> buildPrompt({
   final out = <ApiMessage>[];
 
   // 1. 主系统提示词(始终注入,作为基线)
-  final primary = config.systemPrompts.isNotEmpty
-      ? config.systemPrompts.first
-      : SystemPrompt.defaultPrompt();
-  var basePrompt = primary.content;
-  if (chat.extraSystemPrompt != null && chat.extraSystemPrompt!.isNotEmpty) {
-    basePrompt += '\n\n[对话级追加]\n${chat.extraSystemPrompt}';
-  }
+  final basePrompt = _primaryPrompt(chat, config);
   out.add(ApiMessage('system', basePrompt));
 
   // 2. 早期压缩摘要
@@ -30,19 +24,50 @@ List<ApiMessage> buildPrompt({
     out.add(ApiMessage('system', '[历史摘要]\n${m.content}'));
   }
 
-  // 3. 隐藏再注入:2~4 轮一次,把基线提示词再发一次(用户看不见这段)
+  // 3. 隐藏再注入:每轮一次,把基线提示词再发一次(用户看不见这段)
   if (injectHiddenThisTurn) {
     out.add(ApiMessage('system', basePrompt));
   }
 
-  // 4. 真实对话消息
-  for (final m in visible.where((m) =>
-      m.role == MessageRole.user || m.role == MessageRole.assistant)) {
+  // 4. 预热段:新建对话时静默发出的一次"初始化握手",
+  //    [user(初始化指令) / assistant(READY)] 让提示词进入服务端前缀缓存,
+  //    同时把提示词固化为对话历史的一部分(对齐三种实测方案中的最优)
+  out.add(const ApiMessage('user', _warmupPrompt));
+  out.add(const ApiMessage('assistant', _warmupReply));
+
+  // 5. 真实对话消息;本轮 user 之前再注入一次 system(三明治结构,
+  //    实测对长上下文的遵循度最好)
+  final historyMsgs = visible.where((m) =>
+      m.role == MessageRole.user || m.role == MessageRole.assistant).toList();
+  for (var i = 0; i < historyMsgs.length; i++) {
+    final m = historyMsgs[i];
+    if (i == historyMsgs.length - 1 && injectHiddenThisTurn) {
+      out.add(ApiMessage('system', basePrompt));
+    }
     out.add(ApiMessage(m.role == MessageRole.user ? 'user' : 'assistant',
         m.content));
   }
   return out;
 }
+
+/// 对话的基线系统提示词(模板 + 对话级追加)
+String _primaryPrompt(Chat chat, AppConfig config) {
+  final primary = config.systemPrompts.isNotEmpty
+      ? config.systemPrompts.first
+      : SystemPrompt.defaultPrompt();
+  var base = primary.content;
+  if (chat.extraSystemPrompt != null && chat.extraSystemPrompt!.isNotEmpty) {
+    base += '\n\n[对话级追加]\n${chat.extraSystemPrompt}';
+  }
+  return base;
+}
+
+/// 预热轮的固定初始化指令(不面向用户)
+const String _warmupPrompt =
+    '(session init — acknowledge with the single word: READY)';
+
+/// 预热轮的固定应答
+const String _warmupReply = 'READY';
 
 /// 对话服务 — 流式发送 + 后台压缩 + 隐藏 system 提示词轮询
 class ChatService {
@@ -98,6 +123,25 @@ class ChatService {
     const injectHidden = true;
     // 首轮:本对话尚无任何 user/assistant 消息(不依赖配对数,避免悬空消息误判)
     final isFirstTurn = priorMsgs.isEmpty;
+
+    // 新建对话(无任何历史)时,先静默发一次预热请求:
+    // 服务端把提示词前缀写入缓存,后续每轮都命中;预热应答也存入数据库,
+    // 成为对话历史的一部分,提示词因此"固化"在上下文里。
+    if (history.isEmpty) {
+      try {
+        await _client.chatOnce(
+          [
+            ApiMessage('system', _primaryPrompt(chat, _config)),
+            ApiMessage('system', _primaryPrompt(chat, _config)),
+            const ApiMessage('user', _warmupPrompt),
+          ],
+          maxTokensOverride: 16,
+          reasoningEffort: 'none',
+        );
+      } catch (_) {
+        // 预热失败不阻塞对话,仅失去缓存收益
+      }
+    }
 
     final prompt = buildPrompt(
       chat: chat,
