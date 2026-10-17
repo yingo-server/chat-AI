@@ -10,7 +10,7 @@ import '../db/app_database.dart';
 import '../main.dart' show ConfigScope;
 import '../models/app_config.dart';
 import '../models/chat.dart';
-import '../services/chat_service.dart';
+import '../services/chat_stream_manager.dart';
 import '../theme/app_theme.dart';
 import '../theme/motion.dart';
 import '../theme/spacing.dart';
@@ -18,8 +18,9 @@ import '../utils/dialogs.dart';
 import '../utils/vault.dart';
 import '../widgets/chat/message_bubble.dart' as chat;
 import '../widgets/chat/streaming_bubble.dart';
+import '../widgets/chat/typing_dots.dart';
 import '../widgets/export_sheet.dart';
-import '../widgets/stream/stream_buffer.dart';
+
 
 class ChatScreen extends StatefulWidget {
   final Chat chat;
@@ -35,29 +36,30 @@ class _ChatScreenState extends State<ChatScreen> {
   final _focus = FocusNode();
 
   AppConfig? _config;
-  ChatService? _service;
 
   List<Message> _messages = [];
-  bool _busy = false;
-  bool _stopRequested = false;
+
+  /// 流式状态由应用级管理器持有 —— 离开页面也能继续输出并落库
+  ChatStreamManager get _manager => ChatStreamManager.instance;
+  int get _chatId => widget.chat.id!;
+  bool get _busy => _manager.isBusy(_chatId);
+  bool _wasBusy = false;
 
   /// 是否已停在列表底部(用于显示"回到最新"按钮)
   bool _atBottom = true;
 
   /// 自动下拉阈值:距底部小于该像素值即视为在底部(参考 Telegram/微信的 120px 量级)
   static const double _autoScrollThreshold = 120;
-  StreamBuffer? _buffer;
 
   /// 已附加的图片 / 文件,会在本轮发送时一起发出
   final List<_Attachment> _attachments = [];
-
-  /// 占位 ValueNotifier — 当没有活跃缓冲时使用
-  static final _emptyTextNotifier = ValueNotifier<String>('');
 
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_onScroll);
+    _manager.addListener(_onManagerChanged);
+    _wasBusy = _busy;
     // 推迟到首帧后,避免 initState 中访问 InheritedWidget(ConfigScope.of)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _bootstrap();
@@ -77,7 +79,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
-    _buffer?.dispose();
+    _manager.removeListener(_onManagerChanged);
     _scroll.dispose();
     _input.dispose();
     _focus.dispose();
@@ -88,13 +90,11 @@ class _ChatScreenState extends State<ChatScreen> {
     final scope = ConfigScope.of(context);
     await scope.ready; // 等待首帧后的保险库/配置初始化
     final cfg = scope.controller.config;
-    final svc = ChatService(cfg);
     final msgs = await AppDatabase.instance
-        .listMessages(widget.chat.id!, includeCompressed: false);
+        .listMessages(_chatId, includeCompressed: false);
     if (!mounted) return;
     setState(() {
       _config = cfg;
-      _service = svc;
       _messages = msgs;
     });
   }
@@ -175,86 +175,70 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_busy) return;
     var text = _input.text.trim();
     if (text.isEmpty && _attachments.isEmpty) return;
-    if (_service == null || _config == null) return;
+    if (_config == null) return;
 
-    // 立即(同步,任何 await 之前)置忙,防止重入
-    _busy = true;
-    _stopRequested = false;
-
-    // 把附件信息拼到 user 消息里(OpenAI images:[text]/... 格式)
+    // 附件信息拼进正文
     if (_attachments.isNotEmpty) {
       final parts = StringBuffer();
       parts.writeln(text);
       for (final a in _attachments) {
-        if (a.isImage) {
-          parts.writeln('\n[图片附件: ${a.name}]');
-        } else {
-          parts.writeln('\n[文件附件: ${a.name}]');
-        }
+        parts.writeln(a.isImage ? '\n[图片附件: ${a.name}]' : '\n[文件附件: ${a.name}]');
       }
       text = parts.toString().trim();
     }
 
-    // 输出速度(用户可调)+ 固定 100 字缓冲上限(内部抗抖动)
-    final buf = StreamBuffer(
-      charsPerSecond: _config!.userPrefs.streamSpeed.toDouble(),
-      maxBuffer: StreamBuffer.fixedMaxBuffer,
-    );
     setState(() {
-      _busy = true;
-      _buffer = buf;
       _input.clear();
       _attachments.clear();
     });
 
     try {
-      final persisted = await AppDatabase.instance.insertMessage(Message(
-        chatId: widget.chat.id!,
+      // 先落库用户消息(乐观显示)
+      await AppDatabase.instance.insertMessage(Message(
+        chatId: _chatId,
         role: MessageRole.user,
         content: text,
       ));
-
-      final baseHistory = await AppDatabase.instance
-          .listMessages(widget.chat.id!, includeCompressed: false);
-
+      final msgs =
+          await AppDatabase.instance.listMessages(_chatId, includeCompressed: false);
       if (!mounted) return;
-      setState(() => _messages = baseHistory);
+      setState(() => _messages = msgs);
       if (_shouldAutoScroll) _scrollToEnd();
 
-      await for (final _ in _service!.sendStream(
+      // 交给应用级管理器:离开页面也会继续
+      unawaited(_manager.start(
         chat: widget.chat,
-        history: _messages.where((m) => m.id != persisted).toList(),
+        config: _config!,
         userText: text,
         alreadyPersistedUserText: true,
-        buffer: buf,
-        onDelta: (_) {
-          // 用户点了停止 → 后续 chunk 直接丢弃(不取消底层流)
-          if (_stopRequested) return;
-        },
-      )) {
-        // drain
-      }
+      ));
     } catch (e) {
       if (mounted) showSnack(context, '错误: $e', error: true);
-    } finally {
-      final msgs = await AppDatabase.instance
-          .listMessages(widget.chat.id!, includeCompressed: false);
-      if (!mounted) return;
-      setState(() {
-        _messages = msgs;
-        _busy = false;
-        _buffer?.dispose();
-        _buffer = null;
-      });
-      _scrollToEnd();
     }
   }
 
-  Future<void> _stop() async {
-    // 仅翻转 UI 标志并置停止请求位;流本身由 _send 的 finally 收尾
-    _stopRequested = true;
+  /// 管理器状态变化:开始/结束都刷新界面;结束时重读消息
+  void _onManagerChanged() {
     if (!mounted) return;
-    setState(() => _busy = false);
+    final busy = _busy;
+    if (_wasBusy && !busy) {
+      // 会话结束 → 重新加载消息(助手回复已落库)
+      AppDatabase.instance
+          .listMessages(_chatId, includeCompressed: false)
+          .then((msgs) {
+        if (!mounted) return;
+        setState(() => _messages = msgs);
+        _scrollToEnd();
+      });
+    }
+    _wasBusy = busy;
+    setState(() {});
+  }
+
+  Future<void> _stop() async {
+    _manager.cancel(_chatId);
+    if (!mounted) return;
+    setState(() {});
     showSnack(context, '已停止');
   }
 
@@ -323,11 +307,15 @@ class _ChatScreenState extends State<ChatScreen> {
                   final isNewest = i == _messages.length - 1 && !_busy;
                   return isNewest ? MotionEntrance(child: bubble) : bubble;
                 }
+                // 流式占位:收到首 token 前显示"三点"动画,之后逐步淡入
+                final partial = _manager.partialOf(_chatId);
+                if (partial == null) return const SizedBox.shrink();
                 return ValueListenableBuilder<String>(
                   key: const ValueKey('streaming'),
-                  valueListenable:
-                      _buffer?.displayed ?? _emptyTextNotifier,
-                  builder: (_, text, __) => StreamingBubble(text: text),
+                  valueListenable: partial,
+                  builder: (_, text, __) => text.isEmpty
+                      ? const ThinkingBubble()
+                      : StreamingBubble(text: text),
                 );
               },
             ),

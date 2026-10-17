@@ -5,6 +5,7 @@ import '../db/app_database.dart';
 import '../main.dart' show ConfigScope;
 import '../models/app_config.dart';
 import '../models/chat.dart';
+import '../services/chat_stream_manager.dart';
 import '../theme/spacing.dart';
 import '../utils/dialogs.dart';
 import 'chat_screen.dart';
@@ -137,6 +138,14 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // 监听应用级流式会话:后台会话开始/结束时刷新"正在回复"标记
+    return AnimatedBuilder(
+      animation: ChatStreamManager.instance,
+      builder: (context, _) => _buildScaffold(theme),
+    );
+  }
+
+  Widget _buildScaffold(ThemeData theme) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('对话'),
@@ -175,7 +184,27 @@ class _HomeScreenState extends State<HomeScreen> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          subtitle: Text(_relativeTime(c.updatedAt)),
+                          subtitle: ChatStreamManager.instance.isBusy(c.id!)
+                              ? Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    SizedBox(
+                                      width: 12,
+                                      height: 12,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: theme.colorScheme.primary,
+                                      ),
+                                    ),
+                                    const SizedBox(width: Gap.sm),
+                                    Text('正在回复…',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                                color: theme.colorScheme
+                                                    .primary)),
+                                  ],
+                                )
+                              : Text(_relativeTime(c.updatedAt)),
                           trailing: const Icon(Icons.chevron_right),
                           onTap: () => _openChat(c),
                           onLongPress: () => _showChatMenu(c),
