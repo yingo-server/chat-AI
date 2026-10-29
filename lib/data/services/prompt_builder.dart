@@ -1,13 +1,5 @@
 import '../../domain/chat.dart';
-
-/// LLM 请求体里的一条消息(role + content)
-class ApiMessage {
-  final String role;
-  final String content;
-  const ApiMessage(this.role, this.content);
-
-  Map<String, dynamic> toJson() => {'role': role, 'content': content};
-}
+import 'llm_client.dart' show ApiMessage;
 
 /// 组装发送给 LLM 的消息序列。
 ///
