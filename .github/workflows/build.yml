@@ -101,6 +101,7 @@ jobs:
           PYEOF
 
           ENDPOINT="${API_ENDPOINT%/}/chat/completions"
+          echo "ENDPOINT_URL=$ENDPOINT" >> "$GITHUB_ENV"
           echo "POST $ENDPOINT"
           curl -s --max-time 90 -X POST "$ENDPOINT" \
             -H "Authorization: Bearer $API_KEY" \
@@ -112,9 +113,35 @@ jobs:
           c = d['choices'][0]['message']['content']
           print('response chars:', len(c))
           print('response head :', c[:80].replace('\n', ' '))
-          # 长度启发式:system 生效时通常 200+ 字;未注入时约 30-60 字
-          assert len(c) >= 150, 'response too short — system prompt likely NOT applied!'
-          print('PASS: response length indicates the system prompt is applied')
+          # 双探针判定(长度启发式会被网关波动误报):
+          #  system 探针成功  -> 注入链路 OK
+          #  system 失败但 user 成功 -> 网关正在丢弃/降权 system 消息
+          #  两者都失败      -> 网关/模型本身异常
+          import urllib.request
+          def probe(role):
+              body = {'model': __import__('os').environ['API_MODEL'],
+                      'max_tokens': 512, 'reasoning_effort': 'high',
+                      'messages': [{'role': role, 'content':
+                        'Start your reply with the exact token [CH-CONFIRMED]. Now: who are you?'}]}
+              req = urllib.request.Request(
+                  __import__('os').environ['ENDPOINT_URL'],
+                  data=json.dumps(body).encode(),
+                  headers={'Authorization': 'Bearer ' + __import__('os').environ['API_KEY'],
+                           'Content-Type': 'application/json'})
+              r = json.loads(urllib.request.urlopen(req, timeout=90).read())
+              return '[CH-CONFIRMED]' in r['choices'][0]['message'].get('content', '')
+          os_ok = probe('system')
+          u_ok = probe('user')
+          print(f'probe(system)={os_ok} probe(user)={u_ok}')
+          if os_ok:
+              print('PASS: system prompt is applied by the gateway')
+          elif u_ok:
+              print('FAIL: the gateway is dropping/degrading system messages '
+                    '(user-channel probes pass, system-channel does not)')
+              raise SystemExit(2)
+          else:
+              print('FAIL: gateway/model not following instructions at all')
+              raise SystemExit(3)
           PYEOF
 
       - name: Create the release skeleton (tag builds only)
