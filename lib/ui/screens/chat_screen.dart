@@ -17,8 +17,8 @@ import '../../core/theme/spacing.dart';
 import '../../core/utils/dialogs.dart';
 import '../../core/vault/vault.dart';
 import '../widgets/chat/message_bubble.dart' as chat;
-import 'streaming_bubble.dart';
-import 'typing_dots.dart';
+import '../widgets/chat/streaming_bubble.dart';
+import '../widgets/chat/typing_dots.dart';
 import '../widgets/export_sheet.dart';
 
 

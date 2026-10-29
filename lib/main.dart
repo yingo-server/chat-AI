@@ -7,7 +7,7 @@ import 'core/config/app_config.dart';
 import 'ui/screens/home_screen.dart';
 import 'core/config/config_store.dart';
 import 'core/theme/app_theme.dart';
-import 'utils/vault.dart' as vault;
+import 'core/vault/vault.dart' as vault;
 
 /// 冷启动路径(优化后):
 ///   1. 仅完成最小必要初始化,随即 runApp —— 首帧不再等待 I/O 与解密

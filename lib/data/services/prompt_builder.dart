@@ -1,3 +1,4 @@
+import '../../core/config/app_config.dart';
 import '../../domain/chat.dart';
 import 'llm_client.dart' show ApiMessage;
 
@@ -34,8 +35,8 @@ List<ApiMessage> buildPrompt({
       'system', summary.isEmpty ? base : '$base\n\n[历史摘要]\n$summary'));
 
   // [1][2] 预热握手(固定前缀,服务端缓存的锚点)
-  out.add(const ApiMessage('user', _warmupPrompt));
-  out.add(const ApiMessage('assistant', _warmupReply));
+  out.add(const ApiMessage('user', kWarmupPrompt));
+  out.add(const ApiMessage('assistant', kWarmupReply));
 
   // [3..] 真实历史
   final historyMsgs = visible
