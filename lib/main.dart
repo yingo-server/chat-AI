@@ -3,10 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'models/app_config.dart';
-import 'screens/home_screen.dart';
-import 'services/config_store.dart';
-import 'theme/app_theme.dart';
+import 'core/config/app_config.dart';
+import 'ui/screens/home_screen.dart';
+import 'core/config/config_store.dart';
+import 'core/theme/app_theme.dart';
 import 'utils/vault.dart' as vault;
 
 /// 冷启动路径(优化后):

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../models/app_config.dart';
-import '../theme/spacing.dart';
+import '../../core/config/app_config.dart';
+import '../../core/theme/spacing.dart';
 
 /// 设置页 —— 用户可见的全部"配置"仅两项:
 ///   1. 字号

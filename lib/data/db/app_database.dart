@@ -2,7 +2,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
-import '../models/chat.dart';
+import '../../domain/chat.dart';
 
 /// SQLite 持久层 — 应用文档目录下的 ai_chat.db
 class AppDatabase {

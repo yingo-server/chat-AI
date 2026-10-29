@@ -6,19 +6,19 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../db/app_database.dart';
-import '../main.dart' show ConfigScope;
-import '../models/app_config.dart';
-import '../models/chat.dart';
-import '../services/chat_stream_manager.dart';
-import '../theme/app_theme.dart';
-import '../theme/motion.dart';
-import '../theme/spacing.dart';
-import '../utils/dialogs.dart';
-import '../utils/vault.dart';
+import '../../data/db/app_database.dart';
+import '../../main.dart' show ConfigScope;
+import '../../core/config/app_config.dart';
+import '../../domain/chat.dart';
+import '../../data/services/chat_stream_manager.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/theme/motion.dart';
+import '../../core/theme/spacing.dart';
+import '../../core/utils/dialogs.dart';
+import '../../core/vault/vault.dart';
 import '../widgets/chat/message_bubble.dart' as chat;
-import '../widgets/chat/streaming_bubble.dart';
-import '../widgets/chat/typing_dots.dart';
+import 'streaming_bubble.dart';
+import 'typing_dots.dart';
 import '../widgets/export_sheet.dart';
 
 

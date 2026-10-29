@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../models/chat.dart';
+import '../../domain/chat.dart';
 
 /// 纯文本导出。严格一问一答,紧凑格式:
 ///

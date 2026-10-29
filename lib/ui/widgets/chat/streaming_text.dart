@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../animation/message_animations.dart';
+import '../message_animations.dart';
 
 /// 流式文字 —— 逐字淡入 + 尾部光标。
 ///

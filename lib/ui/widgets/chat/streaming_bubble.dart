@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../theme/spacing.dart';
+import '../../../core/theme/spacing.dart';
 import 'streaming_text.dart';
 import 'typing_dots.dart';
 

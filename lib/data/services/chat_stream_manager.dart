@@ -1,9 +1,9 @@
 import 'package:flutter/foundation.dart';
 
-import '../db/app_database.dart';
-import '../models/app_config.dart';
-import '../models/chat.dart';
-import '../widgets/stream/stream_buffer.dart';
+import '../../data/db/app_database.dart';
+import '../../core/config/app_config.dart';
+import '../../domain/chat.dart';
+import '../../ui/widgets/stream/stream_buffer.dart';
 import 'chat_service.dart';
 
 /// 应用级流式会话管理器。

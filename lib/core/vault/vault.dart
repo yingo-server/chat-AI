@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 
-import '../native/vault_ffi.dart';
+import '../../core/vault/vault_ffi.dart';
 
 /// 包装:在不暴露明文到长生命周期变量的情况下,使用 vault 中的秘密
 class Vault {

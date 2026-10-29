@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../models/chat.dart';
-import '../services/export_service.dart';
-import '../theme/spacing.dart';
+import '../../domain/chat.dart';
+import '../../data/services/export_service.dart';
+import '../../core/theme/spacing.dart';
 
 /// 导出底部表单 — 纯文本一问一答([Q1:...] / [A1:...])
 Future<void> showExportSheet(

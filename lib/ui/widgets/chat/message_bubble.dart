@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
-import '../../models/chat.dart';
-import '../../theme/spacing.dart';
+import '../../../domain/chat.dart';
+import '../../../core/theme/spacing.dart';
 
 /// 单条消息气泡
 /// 用户消息按纯文本渲染(输入即所见);助手消息用 flutter_markdown 渲染。

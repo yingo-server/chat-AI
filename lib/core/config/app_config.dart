@@ -20,7 +20,7 @@ library;
 
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import '../utils/vault.dart' as vault;
+import '../vault/vault.dart' as vault;
 
 class AppConfig {
   final AiConfig ai;

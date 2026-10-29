@@ -7,7 +7,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-import '../models/app_config.dart';
+import '../../core/config/app_config.dart';
 
 /// 配置文件持久层(只保存用户偏好和提示词;端点 / 密钥由 native vault 保护)
 class ConfigStore {

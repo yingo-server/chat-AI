@@ -3,7 +3,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import '../models/app_config.dart';
+import '../../core/config/app_config.dart';
 
 /// 一条 OpenAI 兼容消息
 class ApiMessage {
