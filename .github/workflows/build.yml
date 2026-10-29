@@ -101,7 +101,7 @@ jobs:
           PYEOF
 
           ENDPOINT="${API_ENDPOINT%/}/chat/completions"
-          echo "ENDPOINT_URL=$ENDPOINT" >> "$GITHUB_ENV"
+          export ENDPOINT_URL="$ENDPOINT"
           echo "POST $ENDPOINT"
           curl -s --max-time 90 -X POST "$ENDPOINT" \
             -H "Authorization: Bearer $API_KEY" \
